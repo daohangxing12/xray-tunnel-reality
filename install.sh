@@ -14,6 +14,8 @@ UUID_VALUE=""
 SNI_VALUE="www.tesla.com"
 SHORT_ID=""
 NAME=""
+PRIVATE_KEY=""
+PUBLIC_KEY=""
 SOCKS_USER=""
 SOCKS_PASS=""
 SOCKS_UDP="false"
@@ -23,6 +25,8 @@ WS_PATH=""
 FORCE=0
 NON_INTERACTIVE=0
 SKIP_XRAY_INSTALL=0
+XRAY_VERSION="v26.6.27"
+FORCE_XRAY_INSTALL=0
 
 red() { printf '\033[31m%s\033[0m\n' "$*"; }
 green() { printf '\033[32m%s\033[0m\n' "$*"; }
@@ -46,6 +50,8 @@ Options:
   --sni DOMAIN             Reality SNI/target domain. Default: www.tesla.com
   --uuid UUID              VLESS UUID. If omitted, generate randomly.
   --short-id HEX           Reality shortId. If omitted, generate random 8 hex chars.
+  --private-key KEY        Reality server private key. Use this to clone an existing 3x-ui node.
+  --public-key KEY         Optional expected public key. The script verifies it matches --private-key.
   --name NAME              Client link remark.
   --user USER              SOCKS5 username. Omit for interactive/random.
   --pass PASS              SOCKS5 password. Omit for interactive/random.
@@ -54,6 +60,9 @@ Options:
   --cf-entry HOST_OR_IP    Client address, usually preferred IP/domain from a CF preferred-IP site.
                            If omitted, uses --cf-domain.
   --path PATH              WebSocket path for cf-ws. Default: /ws233
+  --xray-version VERSION   Xray version to install. Default: v26.6.27. Use "latest" for latest release.
+  --latest-xray            Install or update to latest Xray release.
+  --force-xray-install     Force official Xray installer even when the same version is installed.
   --yes                    Non-interactive, use defaults/random values. cf-ws still needs --cf-domain.
   --skip-xray-install      Use existing /usr/local/bin/xray.
   --force                  Continue if target port appears busy.
@@ -69,6 +78,8 @@ while [[ $# -gt 0 ]]; do
     --sni) SNI_VALUE="${2:-}"; shift 2 ;;
     --uuid) UUID_VALUE="${2:-}"; shift 2 ;;
     --short-id) SHORT_ID="${2:-}"; shift 2 ;;
+    --private-key) PRIVATE_KEY="${2:-}"; shift 2 ;;
+    --public-key) PUBLIC_KEY="${2:-}"; shift 2 ;;
     --name) NAME="${2:-}"; shift 2 ;;
     --user) SOCKS_USER="${2:-}"; shift 2 ;;
     --pass) SOCKS_PASS="${2:-}"; shift 2 ;;
@@ -76,6 +87,9 @@ while [[ $# -gt 0 ]]; do
     --cf-domain|--host) CF_DOMAIN="${2:-}"; shift 2 ;;
     --cf-entry|--address) CF_ENTRY="${2:-}"; shift 2 ;;
     --path|--ws-path) WS_PATH="${2:-}"; shift 2 ;;
+    --xray-version) XRAY_VERSION="${2:-}"; shift 2 ;;
+    --latest-xray) XRAY_VERSION=""; shift ;;
+    --force-xray-install) FORCE_XRAY_INSTALL=1; shift ;;
     --yes|-y) NON_INTERACTIVE=1; shift ;;
     --skip-xray-install) SKIP_XRAY_INSTALL=1; shift ;;
     --force) FORCE=1; shift ;;
@@ -93,6 +107,7 @@ is_domain() { [[ "$1" =~ ^[A-Za-z0-9.-]+$ ]] && [[ "$1" == *.* ]] && [[ "$1" != 
 is_host_or_ip() { [[ "$1" =~ ^[A-Za-z0-9.:-]+$ ]] && [[ -n "$1" ]]; }
 is_uuid() { [[ "$1" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; }
 is_short_id() { [[ "$1" =~ ^[0-9a-fA-F]{2,16}$ ]] && (( ${#1} % 2 == 0 )); }
+is_x25519_key() { [[ "$1" =~ ^[A-Za-z0-9_-]{40,64}$ ]]; }
 is_path() { [[ "$1" == /* ]] && [[ "$1" != *' '* ]]; }
 random_hex() { openssl rand -hex "${1:-4}"; }
 random_user() { printf 'u%s' "$(random_hex 3)"; }
@@ -123,12 +138,12 @@ ask_required() {
 choose_mode() {
   if [[ -n "$MODE" ]]; then return; fi
   if [[ "$NON_INTERACTIVE" == "1" ]]; then MODE="reality"; return; fi
-  echo "请选择安装协议:"
-  echo "  1) VLESS Reality Vision（3x-ui tunnel结构）"
+  echo "Choose install mode:"
+  echo "  1) VLESS Reality Vision (3x-ui tunnel structure)"
   echo "  2) SOCKS5"
-  echo "  3) CF优选 VLESS-WS"
+  echo "  3) Cloudflare preferred entry VLESS-WS"
   local choice
-  read -r -p "输入 1/2/3 [1]: " choice || true
+  read -r -p "Enter 1/2/3 [1]: " choice || true
   case "${choice:-1}" in
     1) MODE="reality" ;;
     2) MODE="socks5" ;;
@@ -159,13 +174,57 @@ install_deps() {
   fi
 }
 
+normalize_xray_version() {
+  local version="$1"
+  case "$version" in
+    ""|latest|LATEST)
+      printf '%s' ""
+      return
+      ;;
+  esac
+  [[ "$version" == v* ]] || version="v${version}"
+  [[ "$version" =~ ^v[0-9]+(\.[0-9]+){1,2}$ ]] || fail "Invalid --xray-version: $1"
+  printf '%s' "$version"
+}
+
+current_xray_version() {
+  local bin=""
+  if [[ -x /usr/local/bin/xray ]]; then
+    bin="/usr/local/bin/xray"
+  else
+    bin="$(command -v xray 2>/dev/null || true)"
+  fi
+  [[ -n "$bin" ]] || return 0
+  ("$bin" version 2>/dev/null || "$bin" -version 2>/dev/null) | awk 'NR==1 {version=$2; sub(/^v/, "", version); print "v" version; exit}'
+}
+
 install_xray() {
   if [[ "$SKIP_XRAY_INSTALL" == "1" ]]; then
     [[ -x /usr/local/bin/xray ]] || command -v xray >/dev/null 2>&1 || fail "xray not found, remove --skip-xray-install."
     return
   fi
-  info "Installing or updating Xray from XTLS official installer..."
-  bash -c "$(curl -fsSL https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install || fail "Xray install failed."
+  local installer_args current_version
+  installer_args=(install)
+  XRAY_VERSION="$(normalize_xray_version "$XRAY_VERSION")"
+  current_version="$(current_xray_version || true)"
+
+  if [[ -n "$XRAY_VERSION" ]]; then
+    info "Installing Xray ${XRAY_VERSION} from XTLS official installer..."
+    installer_args+=(--version "$XRAY_VERSION")
+    if [[ "$current_version" == "$XRAY_VERSION" && "$FORCE_XRAY_INSTALL" != "1" ]]; then
+      info "Xray ${XRAY_VERSION} is already installed."
+      [[ -x /usr/local/bin/xray ]] || fail "Xray binary missing."
+      return
+    fi
+  else
+    info "Installing or updating latest Xray from XTLS official installer..."
+  fi
+
+  if [[ "$FORCE_XRAY_INSTALL" == "1" ]]; then
+    installer_args+=(-f)
+  fi
+
+  bash -c "$(curl -fsSL https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ "${installer_args[@]}" || fail "Xray install failed."
   [[ -x /usr/local/bin/xray ]] || fail "Xray binary missing after install."
 }
 
@@ -177,10 +236,24 @@ gen_uuid() {
 }
 
 gen_x25519() {
-  local out priv pub
+  local out priv pub derived_pub
+  if [[ -n "$PRIVATE_KEY" ]]; then
+    is_x25519_key "$PRIVATE_KEY" || fail "Invalid --private-key format."
+    out="$(/usr/local/bin/xray x25519 -i "$PRIVATE_KEY" 2>/dev/null || xray x25519 -i "$PRIVATE_KEY" 2>/dev/null || true)"
+    derived_pub="$(printf '%s\n' "$out" | awk -F': *' '/Password|Public/{print $2; exit}')"
+    [[ -n "$derived_pub" ]] || fail "Failed to derive public key from --private-key. Raw output: $out"
+    if [[ -n "$PUBLIC_KEY" ]]; then
+      is_x25519_key "$PUBLIC_KEY" || fail "Invalid --public-key format."
+      [[ "$PUBLIC_KEY" == "$derived_pub" ]] || fail "Provided --public-key does not match --private-key."
+    fi
+    PUBLIC_KEY="${PUBLIC_KEY:-$derived_pub}"
+    return
+  fi
+
+  [[ -z "$PUBLIC_KEY" ]] || fail "--public-key requires --private-key; the server config needs the private key."
   out="$(/usr/local/bin/xray x25519 2>/dev/null || xray x25519 2>/dev/null || true)"
-  priv="$(printf '%s\n' "$out" | awk -F': ' '/Private/{print $2; exit}')"
-  pub="$(printf '%s\n' "$out" | awk -F': ' '/Password|Public/{print $2; exit}')"
+  priv="$(printf '%s\n' "$out" | awk -F': *' '/Private/{print $2; exit}')"
+  pub="$(printf '%s\n' "$out" | awk -F': *' '/Password|Public/{print $2; exit}')"
   [[ -n "$priv" && -n "$pub" ]] || fail "Failed to generate X25519 key pair. Raw output: $out"
   PRIVATE_KEY="$priv"
   PUBLIC_KEY="$pub"
@@ -213,12 +286,12 @@ check_port_free() {
 }
 
 prepare_reality_values() {
-  PUBLIC_PORT="${PUBLIC_PORT:-$(ask '公网 tunnel 端口' '56777')}"
-  INNER_PORT="${INNER_PORT:-$(ask '本机 Reality 端口' '4431')}"
+  PUBLIC_PORT="${PUBLIC_PORT:-$(ask 'Public tunnel port' '56777')}"
+  INNER_PORT="${INNER_PORT:-$(ask 'Local Reality port' '4431')}"
   SNI_VALUE="${SNI_VALUE:-www.tesla.com}"
   if [[ "$NON_INTERACTIVE" != "1" ]]; then SNI_VALUE="$(ask 'SNI/Reality target' "$SNI_VALUE")"; fi
   NAME="${NAME:-Tunnel-Reality}"
-  if [[ "$NON_INTERACTIVE" != "1" ]]; then NAME="$(ask '节点名称' "$NAME")"; fi
+  if [[ "$NON_INTERACTIVE" != "1" ]]; then NAME="$(ask 'Node name' "$NAME")"; fi
   [[ -n "$UUID_VALUE" ]] || UUID_VALUE="$(gen_uuid)"
   [[ -n "$SHORT_ID" ]] || SHORT_ID="$(random_hex 4)"
   is_port "$PUBLIC_PORT" || fail "Invalid --port: $PUBLIC_PORT"
@@ -227,36 +300,38 @@ prepare_reality_values() {
   is_domain "$SNI_VALUE" || fail "Invalid SNI: $SNI_VALUE"
   is_uuid "$UUID_VALUE" || fail "Invalid UUID: $UUID_VALUE"
   is_short_id "$SHORT_ID" || fail "Invalid shortId: $SHORT_ID"
+  [[ -z "$PRIVATE_KEY" ]] || is_x25519_key "$PRIVATE_KEY" || fail "Invalid --private-key format."
+  [[ -z "$PUBLIC_KEY" ]] || is_x25519_key "$PUBLIC_KEY" || fail "Invalid --public-key format."
 }
 
 prepare_socks_values() {
-  PUBLIC_PORT="${PUBLIC_PORT:-$(ask 'SOCKS5 端口' '21109')}"
+  PUBLIC_PORT="${PUBLIC_PORT:-$(ask 'SOCKS5 port' '21109')}"
   NAME="${NAME:-SOCKS5}"
-  if [[ "$NON_INTERACTIVE" != "1" ]]; then NAME="$(ask '节点名称' "$NAME")"; fi
-  SOCKS_USER="${SOCKS_USER:-$(ask 'SOCKS5 用户名' "$(random_user)")}"
-  SOCKS_PASS="${SOCKS_PASS:-$(ask 'SOCKS5 密码' "$(random_pass)")}"
+  if [[ "$NON_INTERACTIVE" != "1" ]]; then NAME="$(ask 'Node name' "$NAME")"; fi
+  SOCKS_USER="${SOCKS_USER:-$(ask 'SOCKS5 username' "$(random_user)")}"
+  SOCKS_PASS="${SOCKS_PASS:-$(ask 'SOCKS5 password' "$(random_pass)")}"
   SOCKS_UDP="${SOCKS_UDP:-false}"
-  if [[ "$NON_INTERACTIVE" != "1" ]]; then SOCKS_UDP="$(ask '是否启用 UDP true/false' "$SOCKS_UDP")"; fi
+  if [[ "$NON_INTERACTIVE" != "1" ]]; then SOCKS_UDP="$(ask 'Enable UDP true/false' "$SOCKS_UDP")"; fi
   [[ "$SOCKS_UDP" == "true" || "$SOCKS_UDP" == "false" ]] || fail "--udp must be true or false"
   is_port "$PUBLIC_PORT" || fail "Invalid --port: $PUBLIC_PORT"
   [[ -n "$SOCKS_USER" && -n "$SOCKS_PASS" ]] || fail "SOCKS5 username/password cannot be empty."
 }
 
 prepare_cf_ws_values() {
-  PUBLIC_PORT="${PUBLIC_PORT:-$(ask '源站 VLESS-WS 端口 / Cloudflare Origin Rule 重写端口' '31520')}"
+  PUBLIC_PORT="${PUBLIC_PORT:-$(ask 'Origin VLESS-WS port / Cloudflare Origin Rule rewrite port' '31520')}"
   WS_PATH="${WS_PATH:-$(ask 'WebSocket path' '/ws233')}"
   if [[ -z "$CF_DOMAIN" ]]; then
-    CF_DOMAIN="$(ask_required 'Cloudflare 橙云代理域名/Host，例如 hostdzire.212202.xyz')"
+    CF_DOMAIN="$(ask_required 'Cloudflare proxied domain/Host, for example hostdzire.212202.xyz')"
   elif [[ "$NON_INTERACTIVE" != "1" ]]; then
-    CF_DOMAIN="$(ask 'Cloudflare 橙云代理域名/Host' "$CF_DOMAIN")"
+    CF_DOMAIN="$(ask 'Cloudflare proxied domain/Host' "$CF_DOMAIN")"
   fi
   if [[ -z "$CF_ENTRY" ]]; then
-    CF_ENTRY="$(ask 'CF优选入口/IP/域名，客户端 address' "$CF_DOMAIN")"
+    CF_ENTRY="$(ask 'CF preferred entry IP/domain for client address' "$CF_DOMAIN")"
   elif [[ "$NON_INTERACTIVE" != "1" ]]; then
-    CF_ENTRY="$(ask 'CF优选入口/IP/域名，客户端 address' "$CF_ENTRY")"
+    CF_ENTRY="$(ask 'CF preferred entry IP/domain for client address' "$CF_ENTRY")"
   fi
   NAME="${NAME:-CF-VLESS-WS}"
-  if [[ "$NON_INTERACTIVE" != "1" ]]; then NAME="$(ask '节点名称' "$NAME")"; fi
+  if [[ "$NON_INTERACTIVE" != "1" ]]; then NAME="$(ask 'Node name' "$NAME")"; fi
   [[ -n "$UUID_VALUE" ]] || UUID_VALUE="$(gen_uuid)"
 
   is_port "$PUBLIC_PORT" || fail "Invalid --port: $PUBLIC_PORT"
@@ -453,17 +528,20 @@ start_service() {
 }
 
 print_reality_result() {
-  local ip remark link
+  local ip remark link installed_version
   ip="$(get_public_ip)"
+  installed_version="$(current_xray_version || true)"
   remark="$(urlencode_component "$NAME")"
   link="vless://${UUID_VALUE}@${ip}:${PUBLIC_PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${SNI_VALUE}&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&spx=%2F&type=tcp&headerType=none#${remark}"
   green "Reality install completed."
   cat <<EOF
 
 ================ VLESS Reality ================
+Structure:           public tunnel -> 127.0.0.1:${INNER_PORT} -> Reality
 Public listen:       ${ip}:${PUBLIC_PORT}
 Relay target:        ${ip}:${PUBLIC_PORT}
 Local Reality:       127.0.0.1:${INNER_PORT}
+Xray version:        ${installed_version:-unknown}
 UUID:                ${UUID_VALUE}
 SNI:                 ${SNI_VALUE}
 Public key:          ${PUBLIC_KEY}
@@ -519,7 +597,7 @@ Service:             xray-tunnel-reality
 Config:              /etc/xray-tunnel-reality/config.json
 
 Cloudflare DNS:
-  ${CF_DOMAIN}  A  ${ip}  Proxied/橙云
+  ${CF_DOMAIN}  A  ${ip}  Proxied/orange-cloud
 
 Cloudflare Origin Rule:
   If:     http.host eq "${CF_DOMAIN}"
