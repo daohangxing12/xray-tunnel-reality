@@ -38,14 +38,14 @@ usage() {
   cat <<'USAGE'
 Usage:
   bash install.sh
-  bash install.sh --mode reality --port 56777 --inner-port 4431 --sni www.icloud.com
+  bash install.sh --mode reality --inner-port 4431 --sni www.icloud.com
   bash install.sh --mode socks5 --port 21109 --user nt --pass nt888888
   bash install.sh --mode cf-ws --port 31520 --cf-domain host.example.com --cf-entry cf.example.com --path /ws233
 
 Options:
   --mode reality|socks5|cf-ws
                            Protocol to install. Omit for interactive menu.
-  --port PORT              Public/origin listen port. Defaults: reality=56777, socks5=21109, cf-ws=31520
+  --port PORT              Public/origin listen port. Defaults: reality=random high port, socks5=21109, cf-ws=31520
   --inner-port PORT        Local Reality port. Default: 4431, only for reality mode.
   --sni DOMAIN             Reality SNI/target domain. Default: www.icloud.com
   --uuid UUID              VLESS UUID. If omitted, generate randomly.
@@ -112,6 +112,23 @@ is_path() { [[ "$1" == /* ]] && [[ "$1" != *' '* ]]; }
 random_hex() { openssl rand -hex "${1:-4}"; }
 random_user() { printf 'u%s' "$(random_hex 3)"; }
 random_pass() { openssl rand -base64 18 | tr -d '/+=' | cut -c1-16; }
+random_high_port() {
+  local i hex num port
+  for ((i = 0; i < 50; i++)); do
+    hex="$(openssl rand -hex 2 2>/dev/null || true)"
+    if [[ -n "$hex" ]]; then
+      num=$((16#$hex))
+    else
+      num=$RANDOM
+    fi
+    port=$((20000 + (num % 40000)))
+    if ! ss -lntup 2>/dev/null | grep -Eq "[:.]${port}[[:space:]]"; then
+      printf '%s' "$port"
+      return
+    fi
+  done
+  printf '%s' "$((20000 + (RANDOM % 32768)))"
+}
 
 ask() {
   local prompt="$1" default="$2" value=""
@@ -308,7 +325,7 @@ check_port_free() {
 }
 
 prepare_reality_values() {
-  PUBLIC_PORT="${PUBLIC_PORT:-$(ask 'Public tunnel port' '56777')}"
+  PUBLIC_PORT="${PUBLIC_PORT:-$(ask 'Public tunnel port, Enter for random high port' "$(random_high_port)")}"
   INNER_PORT="${INNER_PORT:-$(ask 'Local Reality port' '4431')}"
   SNI_VALUE="${SNI_VALUE:-www.icloud.com}"
   if [[ "$NON_INTERACTIVE" != "1" ]]; then SNI_VALUE="$(ask 'SNI/Reality target' "$SNI_VALUE")"; fi
