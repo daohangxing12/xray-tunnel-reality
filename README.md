@@ -56,6 +56,21 @@ bash <(curl -fsSL https://raw.githubusercontent.com/daohangxing12/xray-tunnel-re
 
 The default Reality SNI is `www.icloud.com`. Override it with `--sni` only after testing that the target performs well on your relay path.
 
+Port rule:
+
+- Public tunnel port can change, for example `56777`, `56778`, or any free port.
+- Local Reality port should normally stay `4431`. Change `--inner-port` only when `4431` is already in use.
+
+Default node name is detected from the server country plus protocol, for example:
+
+```text
+DE-VLESS+Reality
+US-SOCKS5
+DE-VLESS+WS
+```
+
+Use `--name` to override the generated name.
+
 Clone a known working 3x-ui Reality node:
 
 ```bash
@@ -67,7 +82,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/daohangxing12/xray-tunnel-re
   --uuid YOUR_UUID \
   --private-key YOUR_REALITY_PRIVATE_KEY \
   --short-id YOUR_SHORT_ID \
-  --name Tunnel-Reality
+  --name DE-VLESS+Reality
 ```
 
 `--private-key` is the server-side Reality private key. The script derives the public key and prints the client URL. You may also pass `--public-key`; the script will verify that it matches the private key.
