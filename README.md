@@ -6,6 +6,122 @@ One-command Xray installer with three modes:
 2. SOCKS5 inbound with username/password authentication.
 3. Cloudflare preferred entry VLESS + WebSocket.
 
+## 简体中文快速操作
+
+### 直接安装
+
+在落地机 root 里执行：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/daohangxing12/xray-tunnel-reality/main/install.sh)
+```
+
+然后按菜单选择：
+
+```text
+1) VLESS Reality Vision，推荐，中转端口用这个
+2) SOCKS5
+3) Cloudflare 优选 VLESS-WS
+```
+
+### Reality 推荐用法
+
+默认直接选 `1` 就行：
+
+```text
+外层公网端口：自动随机高位端口，范围 20000-59999
+内层 Reality 端口：默认 4431，建议不要改
+SNI：默认 www.icloud.com，可自己填
+节点名：自动生成 国家码+协议，例如 DE-VLESS+Reality
+```
+
+安装完成后脚本会打印客户端链接。中转面板里填脚本输出的：
+
+```text
+Relay target / Public listen: 落地IP:外层端口
+```
+
+例如脚本输出：
+
+```text
+Public listen: 107.173.237.81:34567
+Relay target:  107.173.237.81:34567
+```
+
+中转面板就填：
+
+```text
+107.173.237.81:34567
+```
+
+客户端链接里的 IP/端口改成中转机 IP 和中转端口。
+
+### 指定外层端口
+
+默认外层端口是随机的。如果你想固定外层端口，例如 `56777`：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/daohangxing12/xray-tunnel-reality/main/install.sh) \
+  --mode reality \
+  --port 56777 \
+  --inner-port 4431
+```
+
+规则很简单：
+
+```text
+--port       外层公网端口，可以变
+--inner-port 内层 Reality 端口，默认 4431，建议固定
+```
+
+### SOCKS5 安装
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/daohangxing12/xray-tunnel-reality/main/install.sh) \
+  --mode socks5 \
+  --port 21109 \
+  --user nt \
+  --pass nt888888
+```
+
+### Cloudflare 优选 VLESS-WS
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/daohangxing12/xray-tunnel-reality/main/install.sh) \
+  --mode cf-ws \
+  --port 31520 \
+  --cf-domain hostdzire.212202.xyz \
+  --cf-entry cf.3666888.xyz \
+  --path /ws233
+```
+
+含义：
+
+```text
+--cf-domain  你的 Cloudflare 橙云域名，也是 WS Host/SNI
+--cf-entry   客户端连接入口，可以是优选 IP、优选域名或你自己的优选入口域名
+--path       WebSocket 路径
+```
+
+Cloudflare 里还要设置 Origin Rule，把访问 `--cf-domain` 的流量重写到你的源站端口，例如 `31520`。
+
+### 常用检查命令
+
+```bash
+systemctl status xray-tunnel-reality --no-pager
+systemctl restart xray-tunnel-reality
+journalctl -u xray-tunnel-reality -f
+ss -lntup | grep -E ':4431|xray'
+```
+
+### 注意事项
+
+- Reality 中转优先用模式 `1`。
+- `4431` 是本机内层端口，不需要填到中转面板。
+- 中转面板只填外层公网端口。
+- 重新运行脚本会覆盖 `/etc/xray-tunnel-reality/config.json`。
+- 不要把 SSH 密码、Reality 私钥、GitHub token 发到公开页面。
+
 ## Why this Reality layout
 
 Reality mode intentionally uses a two-layer 3x-ui style layout:
@@ -80,22 +196,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/daohangxing12/xray-tunnel-re
   --inner-port 4431
 ```
 
-Clone a known working 3x-ui Reality node:
-
-```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/daohangxing12/xray-tunnel-reality/main/install.sh) \
-  --mode reality \
-  --inner-port 4431 \
-  --sni www.icloud.com \
-  --uuid YOUR_UUID \
-  --private-key YOUR_REALITY_PRIVATE_KEY \
-  --short-id YOUR_SHORT_ID \
-  --name DE-VLESS+Reality
-```
-
-`--private-key` is the server-side Reality private key. The script derives the public key and prints the client URL. You may also pass `--public-key`; the script will verify that it matches the private key.
-
-Do not paste private keys, SSH keys, passwords, panel secrets, or GitHub tokens into public issues, README files, or screenshots.
+Do not paste SSH keys, passwords, panel secrets, or GitHub tokens into public issues, README files, or screenshots.
 
 ## Xray version
 
