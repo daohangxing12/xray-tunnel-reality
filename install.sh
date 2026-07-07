@@ -7,7 +7,7 @@ set -Eeuo pipefail
 PUBLIC_PORT=56777
 INNER_PORT=4431
 UUID_VALUE=""
-SNI_VALUE=""
+SNI_VALUE="www.tesla.com"
 SHORT_ID=""
 NAME="Tunnel-Reality"
 FORCE=0
