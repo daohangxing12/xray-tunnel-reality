@@ -2,25 +2,23 @@
 set -Eeuo pipefail
 
 # xray-tunnel-reality
-# 3x-ui style front tunnel inbound -> local VLESS Reality Vision inbound.
+# Interactive installer for:
+#   1) 3x-ui style tunnel -> local VLESS Reality Vision
+#   2) SOCKS5 inbound
 
-PUBLIC_PORT=56777
-INNER_PORT=4431
+MODE=""
+PUBLIC_PORT=""
+INNER_PORT=""
 UUID_VALUE=""
 SNI_VALUE="www.tesla.com"
 SHORT_ID=""
-NAME="Tunnel-Reality"
+NAME=""
+SOCKS_USER=""
+SOCKS_PASS=""
+SOCKS_UDP="false"
 FORCE=0
+NON_INTERACTIVE=0
 SKIP_XRAY_INSTALL=0
-
-SNI_POOL=(
-  "www.icloud.com"
-  "www.apple.com"
-  "developer.apple.com"
-  "www.microsoft.com"
-  "www.tesla.com"
-  "www.cloudflare.com"
-)
 
 red() { printf '\033[31m%s\033[0m\n' "$*"; }
 green() { printf '\033[32m%s\033[0m\n' "$*"; }
@@ -31,34 +29,41 @@ fail() { red "[ERROR] $*"; exit 1; }
 usage() {
   cat <<'USAGE'
 Usage:
-  bash install.sh [options]
+  bash install.sh
+  bash install.sh --mode reality --port 56777 --inner-port 4431 --sni www.tesla.com
+  bash install.sh --mode socks5 --port 21109 --user nt --pass nt888888
 
 Options:
-  --port PORT             Public tunnel listen port. Default: 56777
-  --inner-port PORT       Local Reality listen port. Default: 4431
-  --sni DOMAIN            Reality SNI/target domain. If omitted, choose randomly.
-  --uuid UUID             VLESS UUID. If omitted, generate randomly.
-  --short-id HEX          Reality shortId. If omitted, generate random 8 hex chars.
-  --name NAME             Client link remark. Default: Tunnel-Reality
-  --skip-xray-install     Use existing /usr/local/bin/xray.
-  --force                 Overwrite even if config directory exists.
-  -h, --help              Show this help.
-
-Examples:
-  bash install.sh
-  bash install.sh --sni www.icloud.com --port 56777
-  bash install.sh --uuid ecfb... --sni www.icloud.com
+  --mode reality|socks5     Protocol to install. Omit for interactive menu.
+  --port PORT               Public listen port. Defaults: reality=56777, socks5=21109
+  --inner-port PORT         Local Reality port. Default: 4431, only for reality mode.
+  --sni DOMAIN              Reality SNI/target domain. Default: www.tesla.com
+  --uuid UUID               VLESS UUID. If omitted, generate randomly.
+  --short-id HEX            Reality shortId. If omitted, generate random 8 hex chars.
+  --name NAME               Client link remark.
+  --user USER               SOCKS5 username. Omit for interactive/random.
+  --pass PASS               SOCKS5 password. Omit for interactive/random.
+  --udp true|false          Enable SOCKS5 UDP. Default: false.
+  --yes                     Non-interactive, use defaults/random values.
+  --skip-xray-install       Use existing /usr/local/bin/xray.
+  --force                   Continue if target port appears busy.
+  -h, --help                Show this help.
 USAGE
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --mode) MODE="${2:-}"; shift 2 ;;
     --port) PUBLIC_PORT="${2:-}"; shift 2 ;;
     --inner-port) INNER_PORT="${2:-}"; shift 2 ;;
     --sni) SNI_VALUE="${2:-}"; shift 2 ;;
     --uuid) UUID_VALUE="${2:-}"; shift 2 ;;
     --short-id) SHORT_ID="${2:-}"; shift 2 ;;
     --name) NAME="${2:-}"; shift 2 ;;
+    --user) SOCKS_USER="${2:-}"; shift 2 ;;
+    --pass) SOCKS_PASS="${2:-}"; shift 2 ;;
+    --udp) SOCKS_UDP="${2:-}"; shift 2 ;;
+    --yes|-y) NON_INTERACTIVE=1; shift ;;
     --skip-xray-install) SKIP_XRAY_INSTALL=1; shift ;;
     --force) FORCE=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -70,26 +75,40 @@ is_port() { [[ "$1" =~ ^[0-9]+$ ]] && (( "$1" >= 1 && "$1" <= 65535 )); }
 is_domain() { [[ "$1" =~ ^[A-Za-z0-9.-]+$ ]] && [[ "$1" == *.* ]] && [[ "$1" != .* ]] && [[ "$1" != *. ]]; }
 is_uuid() { [[ "$1" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; }
 is_short_id() { [[ "$1" =~ ^[0-9a-fA-F]{2,16}$ ]] && (( ${#1} % 2 == 0 )); }
+random_hex() { openssl rand -hex "${1:-4}"; }
+random_user() { printf 'u%s' "$(random_hex 3)"; }
+random_pass() { openssl rand -base64 18 | tr -d '/+=' | cut -c1-16; }
 
-is_port "$PUBLIC_PORT" || fail "Invalid --port: $PUBLIC_PORT"
-is_port "$INNER_PORT" || fail "Invalid --inner-port: $INNER_PORT"
-[[ "$PUBLIC_PORT" != "$INNER_PORT" ]] || fail "Public port and inner port must be different."
-
-if [[ -z "$SNI_VALUE" ]]; then
-  idx=$(( RANDOM % ${#SNI_POOL[@]} ))
-  SNI_VALUE="${SNI_POOL[$idx]}"
-fi
-is_domain "$SNI_VALUE" || fail "Invalid SNI: $SNI_VALUE"
-
-need_root() {
-  [[ "$(id -u)" == "0" ]] || fail "Please run as root."
+ask() {
+  local prompt="$1" default="$2" value=""
+  if [[ "$NON_INTERACTIVE" == "1" ]]; then
+    printf '%s' "$default"
+    return
+  fi
+  read -r -p "$prompt [$default]: " value || true
+  printf '%s' "${value:-$default}"
 }
+
+choose_mode() {
+  if [[ -n "$MODE" ]]; then return; fi
+  if [[ "$NON_INTERACTIVE" == "1" ]]; then MODE="reality"; return; fi
+  echo "请选择安装协议:"
+  echo "  1) VLESS Reality Vision（3x-ui tunnel结构）"
+  echo "  2) SOCKS5"
+  local choice
+  read -r -p "输入 1 或 2 [1]: " choice || true
+  case "${choice:-1}" in
+    1) MODE="reality" ;;
+    2) MODE="socks5" ;;
+    *) fail "Invalid choice: $choice" ;;
+  esac
+}
+
+need_root() { [[ "$(id -u)" == "0" ]] || fail "Please run as root."; }
 
 install_deps() {
   local missing=()
-  for c in curl unzip openssl sed awk grep systemctl ss; do
-    command -v "$c" >/dev/null 2>&1 || missing+=("$c")
-  done
+  for c in curl unzip openssl sed awk grep systemctl ss; do command -v "$c" >/dev/null 2>&1 || missing+=("$c"); done
   if (( ${#missing[@]} == 0 )); then return; fi
   info "Installing dependencies: ${missing[*]}"
   if command -v apt-get >/dev/null 2>&1; then
@@ -109,7 +128,7 @@ install_deps() {
 
 install_xray() {
   if [[ "$SKIP_XRAY_INSTALL" == "1" ]]; then
-    command -v xray >/dev/null 2>&1 || [[ -x /usr/local/bin/xray ]] || fail "xray not found, remove --skip-xray-install."
+    [[ -x /usr/local/bin/xray ]] || command -v xray >/dev/null 2>&1 || fail "xray not found, remove --skip-xray-install."
     return
   fi
   info "Installing or updating Xray from XTLS official installer..."
@@ -118,20 +137,10 @@ install_xray() {
 }
 
 gen_uuid() {
-  if command -v xray >/dev/null 2>&1; then
-    xray uuid 2>/dev/null | head -n1 && return
-  fi
-  if [[ -x /usr/local/bin/xray ]]; then
-    /usr/local/bin/xray uuid 2>/dev/null | head -n1 && return
-  fi
-  if command -v uuidgen >/dev/null 2>&1; then
-    uuidgen | tr 'A-Z' 'a-z' && return
-  fi
+  if [[ -x /usr/local/bin/xray ]]; then /usr/local/bin/xray uuid 2>/dev/null | head -n1 && return; fi
+  if command -v xray >/dev/null 2>&1; then xray uuid 2>/dev/null | head -n1 && return; fi
+  if command -v uuidgen >/dev/null 2>&1; then uuidgen | tr 'A-Z' 'a-z' && return; fi
   cat /proc/sys/kernel/random/uuid
-}
-
-gen_short_id() {
-  openssl rand -hex 4
 }
 
 gen_x25519() {
@@ -171,41 +180,50 @@ check_port_free() {
   fi
 }
 
-write_config() {
+prepare_reality_values() {
+  PUBLIC_PORT="${PUBLIC_PORT:-$(ask '公网 tunnel 端口' '56777')}"
+  INNER_PORT="${INNER_PORT:-$(ask '本机 Reality 端口' '4431')}"
+  SNI_VALUE="${SNI_VALUE:-www.tesla.com}"
+  if [[ "$NON_INTERACTIVE" != "1" ]]; then SNI_VALUE="$(ask 'SNI/Reality target' "$SNI_VALUE")"; fi
+  NAME="${NAME:-Tunnel-Reality}"
+  if [[ "$NON_INTERACTIVE" != "1" ]]; then NAME="$(ask '节点名称' "$NAME")"; fi
+  [[ -n "$UUID_VALUE" ]] || UUID_VALUE="$(gen_uuid)"
+  [[ -n "$SHORT_ID" ]] || SHORT_ID="$(random_hex 4)"
+  is_port "$PUBLIC_PORT" || fail "Invalid --port: $PUBLIC_PORT"
+  is_port "$INNER_PORT" || fail "Invalid --inner-port: $INNER_PORT"
+  [[ "$PUBLIC_PORT" != "$INNER_PORT" ]] || fail "Public port and inner port must be different."
+  is_domain "$SNI_VALUE" || fail "Invalid SNI: $SNI_VALUE"
+  is_uuid "$UUID_VALUE" || fail "Invalid UUID: $UUID_VALUE"
+  is_short_id "$SHORT_ID" || fail "Invalid shortId: $SHORT_ID"
+}
+
+prepare_socks_values() {
+  PUBLIC_PORT="${PUBLIC_PORT:-$(ask 'SOCKS5 端口' '21109')}"
+  NAME="${NAME:-SOCKS5}"
+  if [[ "$NON_INTERACTIVE" != "1" ]]; then NAME="$(ask '节点名称' "$NAME")"; fi
+  SOCKS_USER="${SOCKS_USER:-$(ask 'SOCKS5 用户名' "$(random_user)")}"
+  SOCKS_PASS="${SOCKS_PASS:-$(ask 'SOCKS5 密码' "$(random_pass)")}"
+  SOCKS_UDP="${SOCKS_UDP:-false}"
+  if [[ "$NON_INTERACTIVE" != "1" ]]; then SOCKS_UDP="$(ask '是否启用 UDP true/false' "$SOCKS_UDP")"; fi
+  [[ "$SOCKS_UDP" == "true" || "$SOCKS_UDP" == "false" ]] || fail "--udp must be true or false"
+  is_port "$PUBLIC_PORT" || fail "Invalid --port: $PUBLIC_PORT"
+  [[ -n "$SOCKS_USER" && -n "$SOCKS_PASS" ]] || fail "SOCKS5 username/password cannot be empty."
+}
+
+write_reality_config() {
   local dir=/etc/xray-tunnel-reality
   mkdir -p "$dir"
   chmod 755 "$dir"
   cat > "$dir/config.json" <<JSON
 {
-  "log": {
-    "access": "none",
-    "error": "",
-    "loglevel": "warning"
-  },
+  "log": {"access": "none", "error": "", "loglevel": "warning"},
   "routing": {
     "domainStrategy": "AsIs",
     "rules": [
-      {
-        "type": "field",
-        "domain": ["$SNI_VALUE"],
-        "inboundTag": ["inbound-$PUBLIC_PORT"],
-        "outboundTag": "direct"
-      },
-      {
-        "type": "field",
-        "inboundTag": ["inbound-$PUBLIC_PORT"],
-        "outboundTag": "blocked"
-      },
-      {
-        "type": "field",
-        "outboundTag": "blocked",
-        "ip": ["geoip:private"]
-      },
-      {
-        "type": "field",
-        "outboundTag": "blocked",
-        "protocol": ["bittorrent"]
-      }
+      {"type": "field", "domain": ["$SNI_VALUE"], "inboundTag": ["inbound-$PUBLIC_PORT"], "outboundTag": "direct"},
+      {"type": "field", "inboundTag": ["inbound-$PUBLIC_PORT"], "outboundTag": "blocked"},
+      {"type": "field", "outboundTag": "blocked", "ip": ["geoip:private"]},
+      {"type": "field", "outboundTag": "blocked", "protocol": ["bittorrent"]}
     ]
   },
   "inbounds": [
@@ -213,85 +231,69 @@ write_config() {
       "listen": "0.0.0.0",
       "port": $PUBLIC_PORT,
       "protocol": "tunnel",
-      "settings": {
-        "address": "127.0.0.1",
-        "port": $INNER_PORT,
-        "portMap": {},
-        "network": "tcp,udp",
-        "followRedirect": false
-      },
+      "settings": {"address": "127.0.0.1", "port": $INNER_PORT, "portMap": {}, "network": "tcp,udp", "followRedirect": false},
       "tag": "inbound-$PUBLIC_PORT",
-      "sniffing": {
-        "enabled": true,
-        "destOverride": ["tls"],
-        "metadataOnly": false,
-        "routeOnly": true
-      }
+      "sniffing": {"enabled": true, "destOverride": ["tls"], "metadataOnly": false, "routeOnly": true}
     },
     {
       "listen": "127.0.0.1",
       "port": $INNER_PORT,
       "protocol": "vless",
-      "settings": {
-        "clients": [
-          {
-            "id": "$UUID_VALUE",
-            "flow": "xtls-rprx-vision",
-            "email": "default@tunnel-reality"
-          }
-        ],
-        "decryption": "none"
-      },
+      "settings": {"clients": [{"id": "$UUID_VALUE", "flow": "xtls-rprx-vision", "email": "default@tunnel-reality"}], "decryption": "none"},
       "streamSettings": {
         "network": "tcp",
         "security": "reality",
-        "tcpSettings": {
-          "acceptProxyProtocol": false,
-          "header": {"type": "none"}
-        },
-        "realitySettings": {
-          "show": false,
-          "target": "$SNI_VALUE:443",
-          "xver": 0,
-          "serverNames": ["$SNI_VALUE"],
-          "privateKey": "$PRIVATE_KEY",
-          "shortIds": ["$SHORT_ID"]
-        }
+        "tcpSettings": {"acceptProxyProtocol": false, "header": {"type": "none"}},
+        "realitySettings": {"show": false, "target": "$SNI_VALUE:443", "xver": 0, "serverNames": ["$SNI_VALUE"], "privateKey": "$PRIVATE_KEY", "shortIds": ["$SHORT_ID"]}
       },
       "tag": "inbound-127.0.0.1:$INNER_PORT",
-      "sniffing": {
-        "enabled": true,
-        "destOverride": ["http", "tls", "quic"],
-        "metadataOnly": false,
-        "routeOnly": true
-      }
+      "sniffing": {"enabled": true, "destOverride": ["http", "tls", "quic"], "metadataOnly": false, "routeOnly": true}
     }
   ],
   "outbounds": [
+    {"tag": "direct", "protocol": "freedom", "settings": {"domainStrategy": "UseIPv4"}},
+    {"tag": "blocked", "protocol": "blackhole", "settings": {}}
+  ],
+  "policy": {"levels": {"0": {"statsUserDownlink": true, "statsUserUplink": true}}, "system": {"statsInboundDownlink": true, "statsInboundUplink": true}},
+  "stats": {}
+}
+JSON
+  chmod 600 "$dir/config.json"
+}
+
+write_socks_config() {
+  local dir=/etc/xray-tunnel-reality
+  mkdir -p "$dir"
+  chmod 755 "$dir"
+  cat > "$dir/config.json" <<JSON
+{
+  "log": {"access": "none", "error": "", "loglevel": "warning"},
+  "routing": {
+    "domainStrategy": "AsIs",
+    "rules": [
+      {"type": "field", "outboundTag": "blocked", "ip": ["geoip:private"]},
+      {"type": "field", "outboundTag": "blocked", "protocol": ["bittorrent"]}
+    ]
+  },
+  "inbounds": [
     {
-      "tag": "direct",
-      "protocol": "freedom",
-      "settings": {"domainStrategy": "UseIPv4"}
-    },
-    {
-      "tag": "blocked",
-      "protocol": "blackhole",
-      "settings": {}
+      "listen": "0.0.0.0",
+      "port": $PUBLIC_PORT,
+      "protocol": "socks",
+      "settings": {
+        "auth": "password",
+        "accounts": [{"user": "$SOCKS_USER", "pass": "$SOCKS_PASS"}],
+        "udp": $SOCKS_UDP,
+        "ip": "127.0.0.1"
+      },
+      "tag": "socks-$PUBLIC_PORT",
+      "sniffing": {"enabled": false, "destOverride": ["http", "tls", "quic", "fakedns"], "metadataOnly": false, "routeOnly": false}
     }
   ],
-  "policy": {
-    "levels": {
-      "0": {
-        "statsUserDownlink": true,
-        "statsUserUplink": true
-      }
-    },
-    "system": {
-      "statsInboundDownlink": true,
-      "statsInboundUplink": true
-    }
-  },
-  "stats": {}
+  "outbounds": [
+    {"tag": "direct", "protocol": "freedom", "settings": {"domainStrategy": "UseIPv4"}},
+    {"tag": "blocked", "protocol": "blackhole", "settings": {}}
+  ]
 }
 JSON
   chmod 600 "$dir/config.json"
@@ -331,49 +333,33 @@ open_firewall() {
   fi
 }
 
-main() {
-  need_root
-  install_deps
-  install_xray
-
-  [[ -n "$UUID_VALUE" ]] || UUID_VALUE="$(gen_uuid)"
-  is_uuid "$UUID_VALUE" || fail "Invalid UUID: $UUID_VALUE"
-
-  [[ -n "$SHORT_ID" ]] || SHORT_ID="$(gen_short_id)"
-  is_short_id "$SHORT_ID" || fail "Invalid shortId: $SHORT_ID"
-
-  gen_x25519
-  check_port_free "$PUBLIC_PORT"
-  check_port_free "$INNER_PORT"
-  write_config
-
+start_service() {
   info "Testing Xray config..."
   /usr/local/bin/xray run -test -c /etc/xray-tunnel-reality/config.json >/tmp/xray-tunnel-reality-test.log 2>&1 || {
     cat /tmp/xray-tunnel-reality-test.log
     fail "Xray config test failed."
   }
-
   write_service
   open_firewall
-
   systemctl restart xray-tunnel-reality
   sleep 1
   systemctl is-active --quiet xray-tunnel-reality || {
     systemctl status xray-tunnel-reality --no-pager || true
     fail "Service failed to start."
   }
+}
 
+print_reality_result() {
   local ip remark link
   ip="$(get_public_ip)"
   remark="$(urlencode_remark "$NAME")"
   link="vless://${UUID_VALUE}@${ip}:${PUBLIC_PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${SNI_VALUE}&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&spx=%2F&type=tcp&headerType=none#${remark}"
-
-  green "Install completed."
+  green "Reality install completed."
   cat <<EOF
 
-================ Tunnel Reality ================
+================ VLESS Reality ================
 Public listen:       ${ip}:${PUBLIC_PORT}
-Forward target:      ${ip}:${PUBLIC_PORT}
+Relay target:        ${ip}:${PUBLIC_PORT}
 Local Reality:       127.0.0.1:${INNER_PORT}
 UUID:                ${UUID_VALUE}
 SNI:                 ${SNI_VALUE}
@@ -384,11 +370,55 @@ Config:              /etc/xray-tunnel-reality/config.json
 
 Client link:
 ${link}
-
-Relay panel target should be:
-${ip}:${PUBLIC_PORT}
 ================================================
 EOF
+}
+
+print_socks_result() {
+  local ip link remark
+  ip="$(get_public_ip)"
+  remark="$(urlencode_remark "$NAME")"
+  link="socks://${SOCKS_USER}:${SOCKS_PASS}@${ip}:${PUBLIC_PORT}#${remark}"
+  green "SOCKS5 install completed."
+  cat <<EOF
+
+================ SOCKS5 ================
+Public listen:       ${ip}:${PUBLIC_PORT}
+Relay target:        ${ip}:${PUBLIC_PORT}
+Username:            ${SOCKS_USER}
+Password:            ${SOCKS_PASS}
+UDP:                 ${SOCKS_UDP}
+Service:             xray-tunnel-reality
+Config:              /etc/xray-tunnel-reality/config.json
+
+SOCKS5 URL:
+${link}
+========================================
+EOF
+}
+
+main() {
+  need_root
+  choose_mode
+  [[ "$MODE" == "reality" || "$MODE" == "socks5" ]] || fail "--mode must be reality or socks5"
+  install_deps
+  install_xray
+
+  if [[ "$MODE" == "reality" ]]; then
+    prepare_reality_values
+    gen_x25519
+    check_port_free "$PUBLIC_PORT"
+    check_port_free "$INNER_PORT"
+    write_reality_config
+    start_service
+    print_reality_result
+  else
+    prepare_socks_values
+    check_port_free "$PUBLIC_PORT"
+    write_socks_config
+    start_service
+    print_socks_result
+  fi
 }
 
 main "$@"
