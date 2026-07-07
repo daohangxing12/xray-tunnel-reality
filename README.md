@@ -44,12 +44,11 @@ Install with defaults:
 bash <(curl -fsSL https://raw.githubusercontent.com/daohangxing12/xray-tunnel-reality/main/install.sh) --mode reality --yes
 ```
 
-Install with custom port and SNI:
+Install with custom SNI and a random public high port:
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/daohangxing12/xray-tunnel-reality/main/install.sh) \
   --mode reality \
-  --port 56777 \
   --inner-port 4431 \
   --sni www.icloud.com
 ```
@@ -58,7 +57,8 @@ The default Reality SNI is `www.icloud.com`. Override it with `--sni` only after
 
 Port rule:
 
-- Public tunnel port can change, for example `56777`, `56778`, or any free port.
+- Public tunnel port is random by default in the `20000-59999` range.
+- Use `--port` when you want to specify the public tunnel port yourself.
 - Local Reality port should normally stay `4431`. Change `--inner-port` only when `4431` is already in use.
 
 Default node name is detected from the server country plus protocol, for example:
@@ -71,12 +71,20 @@ DE-VLESS+WS
 
 Use `--name` to override the generated name.
 
-Clone a known working 3x-ui Reality node:
+Specify public port manually:
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/daohangxing12/xray-tunnel-reality/main/install.sh) \
   --mode reality \
   --port 56777 \
+  --inner-port 4431
+```
+
+Clone a known working 3x-ui Reality node:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/daohangxing12/xray-tunnel-reality/main/install.sh) \
+  --mode reality \
   --inner-port 4431 \
   --sni www.icloud.com \
   --uuid YOUR_UUID \
