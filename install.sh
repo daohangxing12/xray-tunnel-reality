@@ -378,12 +378,25 @@ write_reality_config() {
       "listen": "127.0.0.1",
       "port": $INNER_PORT,
       "protocol": "vless",
-      "settings": {"clients": [{"id": "$UUID_VALUE", "flow": "xtls-rprx-vision", "email": "default@tunnel-reality"}], "decryption": "none"},
+      "settings": {"clients": [{"id": "$UUID_VALUE", "flow": "xtls-rprx-vision", "email": "default@tunnel-reality"}], "decryption": "none", "encryption": "none"},
       "streamSettings": {
         "network": "tcp",
         "security": "reality",
+        "externalProxy": [],
         "tcpSettings": {"acceptProxyProtocol": false, "header": {"type": "none"}},
-        "realitySettings": {"show": false, "target": "$SNI_VALUE:443", "xver": 0, "serverNames": ["$SNI_VALUE"], "privateKey": "$PRIVATE_KEY", "shortIds": ["$SHORT_ID"]}
+        "realitySettings": {
+          "show": false,
+          "target": "$SNI_VALUE:443",
+          "xver": 0,
+          "serverNames": ["$SNI_VALUE"],
+          "privateKey": "$PRIVATE_KEY",
+          "minClientVer": "",
+          "maxClientVer": "",
+          "maxTimediff": 0,
+          "shortIds": ["$SHORT_ID"],
+          "mldsa65Seed": "",
+          "settings": {"publicKey": "$PUBLIC_KEY", "fingerprint": "chrome", "serverName": "", "spiderX": "/", "mldsa65Verify": ""}
+        }
       },
       "tag": "inbound-127.0.0.1:$INNER_PORT",
       "sniffing": {"enabled": true, "destOverride": ["http", "tls", "quic"], "metadataOnly": false, "routeOnly": true}
