@@ -198,6 +198,10 @@ current_xray_version() {
   ("$bin" version 2>/dev/null || "$bin" -version 2>/dev/null) | awk 'NR==1 {version=$2; sub(/^v/, "", version); print "v" version; exit}'
 }
 
+xray_data_ready() {
+  [[ -s /usr/local/share/xray/geoip.dat ]]
+}
+
 install_xray() {
   if [[ "$SKIP_XRAY_INSTALL" == "1" ]]; then
     [[ -x /usr/local/bin/xray ]] || command -v xray >/dev/null 2>&1 || fail "xray not found, remove --skip-xray-install."
@@ -212,9 +216,13 @@ install_xray() {
     info "Installing Xray ${XRAY_VERSION} from XTLS official installer..."
     installer_args+=(--version "$XRAY_VERSION")
     if [[ "$current_version" == "$XRAY_VERSION" && "$FORCE_XRAY_INSTALL" != "1" ]]; then
-      info "Xray ${XRAY_VERSION} is already installed."
-      [[ -x /usr/local/bin/xray ]] || fail "Xray binary missing."
-      return
+      if xray_data_ready; then
+        info "Xray ${XRAY_VERSION} is already installed."
+        [[ -x /usr/local/bin/xray ]] || fail "Xray binary missing."
+        return
+      fi
+      yellow "Xray ${XRAY_VERSION} is installed, but geoip.dat is missing. Reinstalling to restore data files."
+      installer_args+=(-f)
     fi
   else
     info "Installing or updating latest Xray from XTLS official installer..."
