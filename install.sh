@@ -744,12 +744,10 @@ service_restart() {
 show_status() {
   echo
   echo "================ 状态 ================"
-  if systemctl list-unit-files 2>/dev/null | grep -q "^${SERVICE_NAME}.service"; then
-    if systemctl is-active --quiet "$SERVICE_NAME"; then
-      green "服务: 运行中"
-    else
-      yellow "服务: 已停止"
-    fi
+  if systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
+    green "服务: 运行中"
+  elif [[ -f "/etc/systemd/system/${SERVICE_NAME}.service" ]] || systemctl status "$SERVICE_NAME" >/dev/null 2>&1; then
+    yellow "服务: 已停止"
   else
     yellow "服务: 未安装"
   fi
