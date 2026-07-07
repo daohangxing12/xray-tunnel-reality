@@ -11,7 +11,7 @@ MODE=""
 PUBLIC_PORT=""
 INNER_PORT=""
 UUID_VALUE=""
-SNI_VALUE="www.tesla.com"
+SNI_VALUE="www.icloud.com"
 SHORT_ID=""
 NAME=""
 PRIVATE_KEY=""
@@ -38,7 +38,7 @@ usage() {
   cat <<'USAGE'
 Usage:
   bash install.sh
-  bash install.sh --mode reality --port 56777 --inner-port 4431 --sni www.tesla.com
+  bash install.sh --mode reality --port 56777 --inner-port 4431 --sni www.icloud.com
   bash install.sh --mode socks5 --port 21109 --user nt --pass nt888888
   bash install.sh --mode cf-ws --port 31520 --cf-domain host.example.com --cf-entry cf.example.com --path /ws233
 
@@ -47,7 +47,7 @@ Options:
                            Protocol to install. Omit for interactive menu.
   --port PORT              Public/origin listen port. Defaults: reality=56777, socks5=21109, cf-ws=31520
   --inner-port PORT        Local Reality port. Default: 4431, only for reality mode.
-  --sni DOMAIN             Reality SNI/target domain. Default: www.tesla.com
+  --sni DOMAIN             Reality SNI/target domain. Default: www.icloud.com
   --uuid UUID              VLESS UUID. If omitted, generate randomly.
   --short-id HEX           Reality shortId. If omitted, generate random 8 hex chars.
   --private-key KEY        Reality server private key. Use this to clone an existing 3x-ui node.
