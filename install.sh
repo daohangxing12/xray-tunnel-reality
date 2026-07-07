@@ -275,6 +275,20 @@ get_public_ip() {
   printf '%s' "$ip"
 }
 
+get_country_code() {
+  local code=""
+  code="$(curl -fsS4 --max-time 5 https://ipapi.co/country/ 2>/dev/null || true)"
+  [[ "$code" =~ ^[A-Za-z]{2}$ ]] || code="$(curl -fsS4 --max-time 5 https://ipinfo.io/country 2>/dev/null || true)"
+  code="$(printf '%s' "$code" | tr -dc 'A-Za-z' | head -c2 | tr 'a-z' 'A-Z')"
+  [[ "$code" =~ ^[A-Z]{2}$ ]] || code="XX"
+  printf '%s' "$code"
+}
+
+default_name() {
+  local protocol="$1"
+  printf '%s-%s' "$(get_country_code)" "$protocol"
+}
+
 urlencode_component() {
   URLENC_VALUE="$1" python3 - <<'PY' 2>/dev/null || printf '%s' "$1"
 import os, urllib.parse
@@ -296,9 +310,9 @@ check_port_free() {
 prepare_reality_values() {
   PUBLIC_PORT="${PUBLIC_PORT:-$(ask 'Public tunnel port' '56777')}"
   INNER_PORT="${INNER_PORT:-$(ask 'Local Reality port' '4431')}"
-  SNI_VALUE="${SNI_VALUE:-www.tesla.com}"
+  SNI_VALUE="${SNI_VALUE:-www.icloud.com}"
   if [[ "$NON_INTERACTIVE" != "1" ]]; then SNI_VALUE="$(ask 'SNI/Reality target' "$SNI_VALUE")"; fi
-  NAME="${NAME:-Tunnel-Reality}"
+  NAME="${NAME:-$(default_name 'VLESS+Reality')}"
   if [[ "$NON_INTERACTIVE" != "1" ]]; then NAME="$(ask 'Node name' "$NAME")"; fi
   [[ -n "$UUID_VALUE" ]] || UUID_VALUE="$(gen_uuid)"
   [[ -n "$SHORT_ID" ]] || SHORT_ID="$(random_hex 4)"
@@ -314,7 +328,7 @@ prepare_reality_values() {
 
 prepare_socks_values() {
   PUBLIC_PORT="${PUBLIC_PORT:-$(ask 'SOCKS5 port' '21109')}"
-  NAME="${NAME:-SOCKS5}"
+  NAME="${NAME:-$(default_name 'SOCKS5')}"
   if [[ "$NON_INTERACTIVE" != "1" ]]; then NAME="$(ask 'Node name' "$NAME")"; fi
   SOCKS_USER="${SOCKS_USER:-$(ask 'SOCKS5 username' "$(random_user)")}"
   SOCKS_PASS="${SOCKS_PASS:-$(ask 'SOCKS5 password' "$(random_pass)")}"
@@ -338,7 +352,7 @@ prepare_cf_ws_values() {
   elif [[ "$NON_INTERACTIVE" != "1" ]]; then
     CF_ENTRY="$(ask 'CF preferred entry IP/domain for client address' "$CF_ENTRY")"
   fi
-  NAME="${NAME:-CF-VLESS-WS}"
+  NAME="${NAME:-$(default_name 'VLESS+WS')}"
   if [[ "$NON_INTERACTIVE" != "1" ]]; then NAME="$(ask 'Node name' "$NAME")"; fi
   [[ -n "$UUID_VALUE" ]] || UUID_VALUE="$(gen_uuid)"
 
