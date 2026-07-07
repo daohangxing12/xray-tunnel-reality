@@ -79,9 +79,26 @@ bash <(curl -fsSL https://raw.githubusercontent.com/daohangxing12/xray-tunnel-re
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/daohangxing12/xray-tunnel-reality/main/install.sh) \
   --mode socks5 \
-  --port 21109 \
-  --user nt \
-  --pass nt888888
+  --yes
+```
+
+默认会自动随机：
+
+```text
+SOCKS5 端口
+SOCKS5 用户名
+SOCKS5 密码
+节点名
+```
+
+如果你要手动指定：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/daohangxing12/xray-tunnel-reality/main/install.sh) \
+  --mode socks5 \
+  --port 你的端口 \
+  --user 你的用户名 \
+  --pass 你的密码
 ```
 
 ### Cloudflare 优选 VLESS-WS
@@ -89,10 +106,8 @@ bash <(curl -fsSL https://raw.githubusercontent.com/daohangxing12/xray-tunnel-re
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/daohangxing12/xray-tunnel-reality/main/install.sh) \
   --mode cf-ws \
-  --port 31520 \
   --cf-domain hostdzire.212202.xyz \
-  --cf-entry cf.3666888.xyz \
-  --path /ws233
+  --cf-entry cf.3666888.xyz
 ```
 
 含义：
@@ -100,10 +115,22 @@ bash <(curl -fsSL https://raw.githubusercontent.com/daohangxing12/xray-tunnel-re
 ```text
 --cf-domain  你的 Cloudflare 橙云域名，也是 WS Host/SNI
 --cf-entry   客户端连接入口，可以是优选 IP、优选域名或你自己的优选入口域名
---path       WebSocket 路径
+--port       源站端口，默认随机高位端口
+--path       WebSocket 路径，默认随机
 ```
 
-Cloudflare 里还要设置 Origin Rule，把访问 `--cf-domain` 的流量重写到你的源站端口，例如 `31520`。
+Cloudflare 里还要设置 Origin Rule，把访问 `--cf-domain` 的流量重写到脚本输出的源站端口。
+
+如果你要手动指定源站端口和路径：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/daohangxing12/xray-tunnel-reality/main/install.sh) \
+  --mode cf-ws \
+  --port 你的源站端口 \
+  --cf-domain hostdzire.212202.xyz \
+  --cf-entry cf.3666888.xyz \
+  --path /你的路径
+```
 
 ### 常用检查命令
 
@@ -113,6 +140,21 @@ systemctl restart xray-tunnel-reality
 journalctl -u xray-tunnel-reality -f
 ss -lntup | grep -E ':4431|xray'
 ```
+
+### 卸载
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/daohangxing12/xray-tunnel-reality/main/install.sh) --uninstall
+```
+
+卸载只删除：
+
+```text
+xray-tunnel-reality 服务
+/etc/xray-tunnel-reality 配置目录
+```
+
+不会删除 `/usr/local/bin/xray`，避免影响其它面板或其它节点。
 
 ### 注意事项
 
@@ -150,6 +192,7 @@ Interactive menu:
 1) VLESS Reality Vision (3x-ui tunnel structure)
 2) SOCKS5
 3) Cloudflare preferred entry VLESS-WS
+4) Uninstall xray-tunnel-reality
 ```
 
 ## Reality examples
@@ -229,25 +272,25 @@ bash <(curl -fsSL https://raw.githubusercontent.com/daohangxing12/xray-tunnel-re
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/daohangxing12/xray-tunnel-reality/main/install.sh) \
   --mode socks5 \
-  --port 21109 \
-  --user nt \
-  --pass nt888888
+  --yes
 ```
+
+SOCKS5 port, username, and password are random by default. Use `--port`, `--user`, and `--pass` only when you want to set them manually.
 
 ## Cloudflare preferred entry VLESS-WS
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/daohangxing12/xray-tunnel-reality/main/install.sh) \
   --mode cf-ws \
-  --port 31520 \
   --cf-domain hostdzire.212202.xyz \
-  --cf-entry cf.3666888.xyz \
-  --path /ws233
+  --cf-entry cf.3666888.xyz
 ```
 
 `--cf-entry` is the client address. It can be a preferred IP, preferred domain, or your own domain pointed to a preferred Cloudflare IP.
 
 `--cf-domain` is the Cloudflare proxied/orange-cloud domain used as WebSocket Host and SNI.
+
+Origin port and WebSocket path are random by default. Use `--port` and `--path` only when you want to set them manually.
 
 Cloudflare DNS:
 
@@ -262,13 +305,13 @@ If incoming request matches:
   http.host eq "cf-domain.example.com"
 
 Then:
-  Rewrite destination/origin port to your source port, for example 31520
+  Rewrite destination/origin port to the source port printed by the script
 ```
 
 Generated client URL:
 
 ```text
-vless://UUID@CF_ENTRY:443?encryption=none&security=tls&type=ws&host=CF_DOMAIN&sni=CF_DOMAIN&path=%2Fws233#NAME
+vless://UUID@CF_ENTRY:443?encryption=none&security=tls&type=ws&host=CF_DOMAIN&sni=CF_DOMAIN&path=URL_ENCODED_WS_PATH#NAME
 ```
 
 ## Relay panel target
@@ -289,9 +332,16 @@ systemctl restart xray-tunnel-reality
 journalctl -u xray-tunnel-reality -f
 ```
 
+Uninstall:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/daohangxing12/xray-tunnel-reality/main/install.sh) --uninstall
+```
+
 ## Notes
 
 - Re-running the script overwrites `/etc/xray-tunnel-reality/config.json`.
 - If a port is already in use, stop the old service or use another `--port`.
 - Use `--force` only when you are sure the old listener can be replaced.
 - CF VLESS-WS origin is plain WS; TLS is provided at the Cloudflare edge.
+- Uninstall removes only `xray-tunnel-reality` service/config and keeps `/usr/local/bin/xray`.
