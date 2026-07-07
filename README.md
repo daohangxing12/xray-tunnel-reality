@@ -51,8 +51,10 @@ bash <(curl -fsSL https://raw.githubusercontent.com/daohangxing12/xray-tunnel-re
   --mode reality \
   --port 56777 \
   --inner-port 4431 \
-  --sni www.tesla.com
+  --sni www.icloud.com
 ```
+
+The default Reality SNI is `www.icloud.com`. Override it with `--sni` only after testing that the target performs well on your relay path.
 
 Clone a known working 3x-ui Reality node:
 
