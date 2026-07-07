@@ -171,6 +171,7 @@ xrt --show
 ```text
 中转填写: 落地IP:端口
 客户端链接: vless://...
+SOCKS5 明文: IP:端口:用户名:密码
 SOCKS 链接: socks://...
 ```
 
