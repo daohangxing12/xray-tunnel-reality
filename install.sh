@@ -5,6 +5,7 @@ set -Eeuo pipefail
 # Interactive installer for:
 #   1) 3x-ui style tunnel -> local VLESS Reality Vision
 #   2) SOCKS5 inbound
+#   3) Cloudflare preferred IP/domain VLESS + WebSocket
 
 MODE=""
 PUBLIC_PORT=""
@@ -16,6 +17,9 @@ NAME=""
 SOCKS_USER=""
 SOCKS_PASS=""
 SOCKS_UDP="false"
+CF_DOMAIN=""
+CF_ENTRY=""
+WS_PATH=""
 FORCE=0
 NON_INTERACTIVE=0
 SKIP_XRAY_INSTALL=0
@@ -32,22 +36,28 @@ Usage:
   bash install.sh
   bash install.sh --mode reality --port 56777 --inner-port 4431 --sni www.tesla.com
   bash install.sh --mode socks5 --port 21109 --user nt --pass nt888888
+  bash install.sh --mode cf-ws --port 31520 --cf-domain host.example.com --cf-entry cf.example.com --path /ws233
 
 Options:
-  --mode reality|socks5     Protocol to install. Omit for interactive menu.
-  --port PORT               Public listen port. Defaults: reality=56777, socks5=21109
-  --inner-port PORT         Local Reality port. Default: 4431, only for reality mode.
-  --sni DOMAIN              Reality SNI/target domain. Default: www.tesla.com
-  --uuid UUID               VLESS UUID. If omitted, generate randomly.
-  --short-id HEX            Reality shortId. If omitted, generate random 8 hex chars.
-  --name NAME               Client link remark.
-  --user USER               SOCKS5 username. Omit for interactive/random.
-  --pass PASS               SOCKS5 password. Omit for interactive/random.
-  --udp true|false          Enable SOCKS5 UDP. Default: false.
-  --yes                     Non-interactive, use defaults/random values.
-  --skip-xray-install       Use existing /usr/local/bin/xray.
-  --force                   Continue if target port appears busy.
-  -h, --help                Show this help.
+  --mode reality|socks5|cf-ws
+                           Protocol to install. Omit for interactive menu.
+  --port PORT              Public/origin listen port. Defaults: reality=56777, socks5=21109, cf-ws=31520
+  --inner-port PORT        Local Reality port. Default: 4431, only for reality mode.
+  --sni DOMAIN             Reality SNI/target domain. Default: www.tesla.com
+  --uuid UUID              VLESS UUID. If omitted, generate randomly.
+  --short-id HEX           Reality shortId. If omitted, generate random 8 hex chars.
+  --name NAME              Client link remark.
+  --user USER              SOCKS5 username. Omit for interactive/random.
+  --pass PASS              SOCKS5 password. Omit for interactive/random.
+  --udp true|false         Enable SOCKS5 UDP. Default: false.
+  --cf-domain DOMAIN       Cloudflare proxied domain used as WS Host/SNI, e.g. hostdzire.212202.xyz.
+  --cf-entry HOST_OR_IP    Client address, usually preferred IP/domain from a CF preferred-IP site.
+                           If omitted, uses --cf-domain.
+  --path PATH              WebSocket path for cf-ws. Default: /ws233
+  --yes                    Non-interactive, use defaults/random values. cf-ws still needs --cf-domain.
+  --skip-xray-install      Use existing /usr/local/bin/xray.
+  --force                  Continue if target port appears busy.
+  -h, --help               Show this help.
 USAGE
 }
 
@@ -63,6 +73,9 @@ while [[ $# -gt 0 ]]; do
     --user) SOCKS_USER="${2:-}"; shift 2 ;;
     --pass) SOCKS_PASS="${2:-}"; shift 2 ;;
     --udp) SOCKS_UDP="${2:-}"; shift 2 ;;
+    --cf-domain|--host) CF_DOMAIN="${2:-}"; shift 2 ;;
+    --cf-entry|--address) CF_ENTRY="${2:-}"; shift 2 ;;
+    --path|--ws-path) WS_PATH="${2:-}"; shift 2 ;;
     --yes|-y) NON_INTERACTIVE=1; shift ;;
     --skip-xray-install) SKIP_XRAY_INSTALL=1; shift ;;
     --force) FORCE=1; shift ;;
@@ -71,10 +84,16 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+case "$MODE" in
+  cfws|cf|cloudflare|vless-ws) MODE="cf-ws" ;;
+esac
+
 is_port() { [[ "$1" =~ ^[0-9]+$ ]] && (( "$1" >= 1 && "$1" <= 65535 )); }
 is_domain() { [[ "$1" =~ ^[A-Za-z0-9.-]+$ ]] && [[ "$1" == *.* ]] && [[ "$1" != .* ]] && [[ "$1" != *. ]]; }
+is_host_or_ip() { [[ "$1" =~ ^[A-Za-z0-9.:-]+$ ]] && [[ -n "$1" ]]; }
 is_uuid() { [[ "$1" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; }
 is_short_id() { [[ "$1" =~ ^[0-9a-fA-F]{2,16}$ ]] && (( ${#1} % 2 == 0 )); }
+is_path() { [[ "$1" == /* ]] && [[ "$1" != *' '* ]]; }
 random_hex() { openssl rand -hex "${1:-4}"; }
 random_user() { printf 'u%s' "$(random_hex 3)"; }
 random_pass() { openssl rand -base64 18 | tr -d '/+=' | cut -c1-16; }
@@ -89,17 +108,31 @@ ask() {
   printf '%s' "${value:-$default}"
 }
 
+ask_required() {
+  local prompt="$1" value=""
+  if [[ "$NON_INTERACTIVE" == "1" ]]; then
+    printf '%s' ""
+    return
+  fi
+  while [[ -z "$value" ]]; do
+    read -r -p "$prompt: " value || true
+  done
+  printf '%s' "$value"
+}
+
 choose_mode() {
   if [[ -n "$MODE" ]]; then return; fi
   if [[ "$NON_INTERACTIVE" == "1" ]]; then MODE="reality"; return; fi
   echo "请选择安装协议:"
   echo "  1) VLESS Reality Vision（3x-ui tunnel结构）"
   echo "  2) SOCKS5"
+  echo "  3) CF优选 VLESS-WS"
   local choice
-  read -r -p "输入 1 或 2 [1]: " choice || true
+  read -r -p "输入 1/2/3 [1]: " choice || true
   case "${choice:-1}" in
     1) MODE="reality" ;;
     2) MODE="socks5" ;;
+    3) MODE="cf-ws" ;;
     *) fail "Invalid choice: $choice" ;;
   esac
 }
@@ -108,21 +141,21 @@ need_root() { [[ "$(id -u)" == "0" ]] || fail "Please run as root."; }
 
 install_deps() {
   local missing=()
-  for c in curl unzip openssl sed awk grep systemctl ss; do command -v "$c" >/dev/null 2>&1 || missing+=("$c"); done
+  for c in curl unzip openssl sed awk grep systemctl ss python3; do command -v "$c" >/dev/null 2>&1 || missing+=("$c"); done
   if (( ${#missing[@]} == 0 )); then return; fi
   info "Installing dependencies: ${missing[*]}"
   if command -v apt-get >/dev/null 2>&1; then
     export DEBIAN_FRONTEND=noninteractive
     apt-get update
-    apt-get install -y curl unzip openssl iproute2 ca-certificates procps
+    apt-get install -y curl unzip openssl iproute2 ca-certificates procps python3
   elif command -v dnf >/dev/null 2>&1; then
-    dnf install -y curl unzip openssl iproute ca-certificates procps-ng
+    dnf install -y curl unzip openssl iproute ca-certificates procps-ng python3
   elif command -v yum >/dev/null 2>&1; then
-    yum install -y curl unzip openssl iproute ca-certificates procps-ng
+    yum install -y curl unzip openssl iproute ca-certificates procps-ng python3
   elif command -v apk >/dev/null 2>&1; then
-    apk add --no-cache curl unzip openssl iproute2 ca-certificates procps
+    apk add --no-cache curl unzip openssl iproute2 ca-certificates procps python3
   else
-    fail "Unsupported package manager. Install curl unzip openssl iproute2 manually."
+    fail "Unsupported package manager. Install curl unzip openssl iproute2 python3 manually."
   fi
 }
 
@@ -161,11 +194,10 @@ get_public_ip() {
   printf '%s' "$ip"
 }
 
-urlencode_remark() {
-  local raw="$1"
-  python3 - <<PY 2>/dev/null || printf '%s' "$raw"
-import urllib.parse
-print(urllib.parse.quote('''$raw'''))
+urlencode_component() {
+  URLENC_VALUE="$1" python3 - <<'PY' 2>/dev/null || printf '%s' "$1"
+import os, urllib.parse
+print(urllib.parse.quote(os.environ.get('URLENC_VALUE', ''), safe=''))
 PY
 }
 
@@ -208,6 +240,30 @@ prepare_socks_values() {
   [[ "$SOCKS_UDP" == "true" || "$SOCKS_UDP" == "false" ]] || fail "--udp must be true or false"
   is_port "$PUBLIC_PORT" || fail "Invalid --port: $PUBLIC_PORT"
   [[ -n "$SOCKS_USER" && -n "$SOCKS_PASS" ]] || fail "SOCKS5 username/password cannot be empty."
+}
+
+prepare_cf_ws_values() {
+  PUBLIC_PORT="${PUBLIC_PORT:-$(ask '源站 VLESS-WS 端口 / Cloudflare Origin Rule 重写端口' '31520')}"
+  WS_PATH="${WS_PATH:-$(ask 'WebSocket path' '/ws233')}"
+  if [[ -z "$CF_DOMAIN" ]]; then
+    CF_DOMAIN="$(ask_required 'Cloudflare 橙云代理域名/Host，例如 hostdzire.212202.xyz')"
+  elif [[ "$NON_INTERACTIVE" != "1" ]]; then
+    CF_DOMAIN="$(ask 'Cloudflare 橙云代理域名/Host' "$CF_DOMAIN")"
+  fi
+  if [[ -z "$CF_ENTRY" ]]; then
+    CF_ENTRY="$(ask 'CF优选入口/IP/域名，客户端 address' "$CF_DOMAIN")"
+  elif [[ "$NON_INTERACTIVE" != "1" ]]; then
+    CF_ENTRY="$(ask 'CF优选入口/IP/域名，客户端 address' "$CF_ENTRY")"
+  fi
+  NAME="${NAME:-CF-VLESS-WS}"
+  if [[ "$NON_INTERACTIVE" != "1" ]]; then NAME="$(ask '节点名称' "$NAME")"; fi
+  [[ -n "$UUID_VALUE" ]] || UUID_VALUE="$(gen_uuid)"
+
+  is_port "$PUBLIC_PORT" || fail "Invalid --port: $PUBLIC_PORT"
+  is_path "$WS_PATH" || fail "Invalid WebSocket path: $WS_PATH. It must start with / and contain no spaces."
+  is_domain "$CF_DOMAIN" || fail "Invalid --cf-domain: $CF_DOMAIN"
+  is_host_or_ip "$CF_ENTRY" || fail "Invalid --cf-entry: $CF_ENTRY"
+  is_uuid "$UUID_VALUE" || fail "Invalid UUID: $UUID_VALUE"
 }
 
 write_reality_config() {
@@ -299,6 +355,53 @@ JSON
   chmod 600 "$dir/config.json"
 }
 
+write_cf_ws_config() {
+  local dir=/etc/xray-tunnel-reality
+  mkdir -p "$dir"
+  chmod 755 "$dir"
+  cat > "$dir/config.json" <<JSON
+{
+  "log": {"access": "none", "error": "", "loglevel": "warning"},
+  "routing": {
+    "domainStrategy": "AsIs",
+    "rules": [
+      {"type": "field", "outboundTag": "blocked", "ip": ["geoip:private"]},
+      {"type": "field", "outboundTag": "blocked", "protocol": ["bittorrent"]}
+    ]
+  },
+  "inbounds": [
+    {
+      "listen": "0.0.0.0",
+      "port": $PUBLIC_PORT,
+      "protocol": "vless",
+      "settings": {
+        "clients": [{"id": "$UUID_VALUE", "email": "default@cf-ws"}],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "ws",
+        "security": "none",
+        "wsSettings": {
+          "acceptProxyProtocol": false,
+          "path": "$WS_PATH",
+          "host": "",
+          "headers": {},
+          "heartbeatPeriod": 0
+        }
+      },
+      "tag": "cf-ws-$PUBLIC_PORT",
+      "sniffing": {"enabled": true, "destOverride": ["http", "tls"], "metadataOnly": false, "routeOnly": false}
+    }
+  ],
+  "outbounds": [
+    {"tag": "direct", "protocol": "freedom", "settings": {"domainStrategy": "UseIPv4"}},
+    {"tag": "blocked", "protocol": "blackhole", "settings": {}}
+  ]
+}
+JSON
+  chmod 600 "$dir/config.json"
+}
+
 write_service() {
   cat > /etc/systemd/system/xray-tunnel-reality.service <<'SERVICE'
 [Unit]
@@ -352,7 +455,7 @@ start_service() {
 print_reality_result() {
   local ip remark link
   ip="$(get_public_ip)"
-  remark="$(urlencode_remark "$NAME")"
+  remark="$(urlencode_component "$NAME")"
   link="vless://${UUID_VALUE}@${ip}:${PUBLIC_PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${SNI_VALUE}&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&spx=%2F&type=tcp&headerType=none#${remark}"
   green "Reality install completed."
   cat <<EOF
@@ -377,7 +480,7 @@ EOF
 print_socks_result() {
   local ip link remark
   ip="$(get_public_ip)"
-  remark="$(urlencode_remark "$NAME")"
+  remark="$(urlencode_component "$NAME")"
   link="socks://${SOCKS_USER}:${SOCKS_PASS}@${ip}:${PUBLIC_PORT}#${remark}"
   green "SOCKS5 install completed."
   cat <<EOF
@@ -397,10 +500,41 @@ ${link}
 EOF
 }
 
+print_cf_ws_result() {
+  local ip remark enc_path link
+  ip="$(get_public_ip)"
+  remark="$(urlencode_component "$NAME")"
+  enc_path="$(urlencode_component "$WS_PATH")"
+  link="vless://${UUID_VALUE}@${CF_ENTRY}:443?encryption=none&security=tls&type=ws&host=${CF_DOMAIN}&sni=${CF_DOMAIN}&path=${enc_path}#${remark}"
+  green "CF VLESS-WS install completed."
+  cat <<EOF
+
+================ CF VLESS-WS ================
+Origin listen:       ${ip}:${PUBLIC_PORT}
+Cloudflare Host/SNI: ${CF_DOMAIN}
+CF preferred entry:  ${CF_ENTRY}:443
+WebSocket path:      ${WS_PATH}
+UUID:                ${UUID_VALUE}
+Service:             xray-tunnel-reality
+Config:              /etc/xray-tunnel-reality/config.json
+
+Cloudflare DNS:
+  ${CF_DOMAIN}  A  ${ip}  Proxied/橙云
+
+Cloudflare Origin Rule:
+  If:     http.host eq "${CF_DOMAIN}"
+  Port:   rewrite to ${PUBLIC_PORT}
+
+Client link:
+${link}
+=============================================
+EOF
+}
+
 main() {
   need_root
   choose_mode
-  [[ "$MODE" == "reality" || "$MODE" == "socks5" ]] || fail "--mode must be reality or socks5"
+  [[ "$MODE" == "reality" || "$MODE" == "socks5" || "$MODE" == "cf-ws" ]] || fail "--mode must be reality, socks5, or cf-ws"
   install_deps
   install_xray
 
@@ -412,12 +546,18 @@ main() {
     write_reality_config
     start_service
     print_reality_result
-  else
+  elif [[ "$MODE" == "socks5" ]]; then
     prepare_socks_values
     check_port_free "$PUBLIC_PORT"
     write_socks_config
     start_service
     print_socks_result
+  else
+    prepare_cf_ws_values
+    check_port_free "$PUBLIC_PORT"
+    write_cf_ws_config
+    start_service
+    print_cf_ws_result
   fi
 }
 
