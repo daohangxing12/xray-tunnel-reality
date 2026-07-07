@@ -1,44 +1,66 @@
 # xray-tunnel-reality
 
-One-command Xray VLESS Reality installer using a 3x-ui style structure:
+Interactive one-command Xray installer with two modes:
+
+1. VLESS Reality Vision using a 3x-ui style structure:
 
 ```text
 public port -> tunnel inbound -> 127.0.0.1 local VLESS Reality Vision inbound
 ```
 
-This is different from directly exposing VLESS Reality on the public port.
+2. SOCKS5 inbound with username/password authentication.
 
-## Install
+## Interactive install
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/daohangxing12/xray-tunnel-reality/main/install.sh)
 ```
 
-Default SNI is `www.tesla.com`. Use a custom SNI:
+The script will ask you to choose:
 
-```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/daohangxing12/xray-tunnel-reality/main/install.sh) --sni www.icloud.com
+```text
+1) VLESS Reality Vision
+2) SOCKS5
 ```
 
-Use a custom public port:
+## Non-interactive examples
+
+Reality with defaults:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/daohangxing12/xray-tunnel-reality/main/install.sh) --port 56777 --sni www.icloud.com
+bash <(curl -fsSL https://raw.githubusercontent.com/daohangxing12/xray-tunnel-reality/main/install.sh) --mode reality --yes
 ```
 
-Use a fixed UUID:
+Reality with custom port and SNI:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/daohangxing12/xray-tunnel-reality/main/install.sh) --uuid YOUR-UUID --sni www.icloud.com
+bash <(curl -fsSL https://raw.githubusercontent.com/daohangxing12/xray-tunnel-reality/main/install.sh) --mode reality --port 56778 --inner-port 4432 --sni www.tesla.com
+```
+
+SOCKS5:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/daohangxing12/xray-tunnel-reality/main/install.sh) --mode socks5 --port 21109 --user nt --pass nt888888
 ```
 
 ## Defaults
 
+Reality mode:
+
 - Public tunnel port: `56777`
 - Local Reality port: `4431`
+- SNI: `www.tesla.com` unless `--sni` is provided
 - UUID: random
 - Short ID: random
-- SNI: `www.tesla.com` unless `--sni` is provided
+
+SOCKS5 mode:
+
+- Public port: `21109`
+- Username/password: prompted or random with `--yes`
+- UDP: `false`
+
+Common:
+
 - Service: `xray-tunnel-reality`
 - Config: `/etc/xray-tunnel-reality/config.json`
 
@@ -47,10 +69,8 @@ bash <(curl -fsSL https://raw.githubusercontent.com/daohangxing12/xray-tunnel-re
 After install, use the printed relay target in your panel:
 
 ```text
-landing-ip:56777
+landing-ip:port
 ```
-
-The script prints a VLESS client link and the exact target after installation.
 
 ## Manage
 
@@ -63,5 +83,5 @@ journalctl -u xray-tunnel-reality -f
 ## Notes
 
 - Do not commit passwords, SSH keys, panel secrets, or GitHub tokens.
-- Re-running the script regenerates UUID/key/shortId unless you pass fixed values.
-- If a port is already in use, stop the old service or use a different `--port`.
+- Re-running the script overwrites `/etc/xray-tunnel-reality/config.json`.
+- If a port is already in use, stop the old service or use another `--port`.
