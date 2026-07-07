@@ -14,7 +14,7 @@ This is different from directly exposing VLESS Reality on the public port.
 bash <(curl -fsSL https://raw.githubusercontent.com/daohangxing12/xray-tunnel-reality/main/install.sh)
 ```
 
-Use a custom SNI:
+Default SNI is `www.tesla.com`. Use a custom SNI:
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/daohangxing12/xray-tunnel-reality/main/install.sh) --sni www.icloud.com
@@ -38,7 +38,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/daohangxing12/xray-tunnel-re
 - Local Reality port: `4431`
 - UUID: random
 - Short ID: random
-- SNI: random from a built-in list unless `--sni` is provided
+- SNI: `www.tesla.com` unless `--sni` is provided
 - Service: `xray-tunnel-reality`
 - Config: `/etc/xray-tunnel-reality/config.json`
 
