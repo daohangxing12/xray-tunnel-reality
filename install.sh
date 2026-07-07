@@ -39,18 +39,19 @@ usage() {
 Usage:
   bash install.sh
   bash install.sh --mode reality --inner-port 4431 --sni www.icloud.com
-  bash install.sh --mode socks5 --port 21109 --user nt --pass nt888888
-  bash install.sh --mode cf-ws --port 31520 --cf-domain host.example.com --cf-entry cf.example.com --path /ws233
+  bash install.sh --mode socks5 --yes
+  bash install.sh --mode cf-ws --cf-domain host.example.com --cf-entry cf.example.com
+  bash install.sh --mode uninstall
 
 Options:
-  --mode reality|socks5|cf-ws
+  --mode reality|socks5|cf-ws|uninstall
                            Protocol to install. Omit for interactive menu.
-  --port PORT              Public/origin listen port. Defaults: reality=random high port, socks5=21109, cf-ws=31520
+  --port PORT              Public/origin listen port. Default: random high port for reality/socks5/cf-ws.
   --inner-port PORT        Local Reality port. Default: 4431, only for reality mode.
   --sni DOMAIN             Reality SNI/target domain. Default: www.icloud.com
   --uuid UUID              VLESS UUID. If omitted, generate randomly.
   --short-id HEX           Reality shortId. If omitted, generate random 8 hex chars.
-  --private-key KEY        Reality server private key. Use this to clone an existing 3x-ui node.
+  --private-key KEY        Reality server private key. Omit to generate randomly.
   --public-key KEY         Optional expected public key. The script verifies it matches --private-key.
   --name NAME              Client link remark.
   --user USER              SOCKS5 username. Omit for interactive/random.
@@ -59,12 +60,13 @@ Options:
   --cf-domain DOMAIN       Cloudflare proxied domain used as WS Host/SNI, e.g. hostdzire.212202.xyz.
   --cf-entry HOST_OR_IP    Client address, usually preferred IP/domain from a CF preferred-IP site.
                            If omitted, uses --cf-domain.
-  --path PATH              WebSocket path for cf-ws. Default: /ws233
+  --path PATH              WebSocket path for cf-ws. Default: random path.
   --xray-version VERSION   Xray version to install. Default: v26.6.27. Use "latest" for latest release.
   --latest-xray            Install or update to latest Xray release.
   --force-xray-install     Force official Xray installer even when the same version is installed.
   --yes                    Non-interactive, use defaults/random values. cf-ws still needs --cf-domain.
   --skip-xray-install      Use existing /usr/local/bin/xray.
+  --uninstall              Remove xray-tunnel-reality service and config, keep Xray binary.
   --force                  Continue if target port appears busy.
   -h, --help               Show this help.
 USAGE
@@ -92,6 +94,7 @@ while [[ $# -gt 0 ]]; do
     --force-xray-install) FORCE_XRAY_INSTALL=1; shift ;;
     --yes|-y) NON_INTERACTIVE=1; shift ;;
     --skip-xray-install) SKIP_XRAY_INSTALL=1; shift ;;
+    --uninstall|--remove) MODE="uninstall"; shift ;;
     --force) FORCE=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) fail "Unknown argument: $1" ;;
@@ -100,6 +103,7 @@ done
 
 case "$MODE" in
   cfws|cf|cloudflare|vless-ws) MODE="cf-ws" ;;
+  remove|delete) MODE="uninstall" ;;
 esac
 
 is_port() { [[ "$1" =~ ^[0-9]+$ ]] && (( "$1" >= 1 && "$1" <= 65535 )); }
@@ -112,6 +116,7 @@ is_path() { [[ "$1" == /* ]] && [[ "$1" != *' '* ]]; }
 random_hex() { openssl rand -hex "${1:-4}"; }
 random_user() { printf 'u%s' "$(random_hex 3)"; }
 random_pass() { openssl rand -base64 18 | tr -d '/+=' | cut -c1-16; }
+random_ws_path() { printf '/ws%s' "$(random_hex 4)"; }
 random_high_port() {
   local i hex num port
   for ((i = 0; i < 50; i++)); do
@@ -159,12 +164,14 @@ choose_mode() {
   echo "  1) VLESS Reality Vision (3x-ui tunnel structure)"
   echo "  2) SOCKS5"
   echo "  3) Cloudflare preferred entry VLESS-WS"
+  echo "  4) Uninstall xray-tunnel-reality"
   local choice
-  read -r -p "Enter 1/2/3 [1]: " choice || true
+  read -r -p "Enter 1/2/3/4 [1]: " choice || true
   case "${choice:-1}" in
     1) MODE="reality" ;;
     2) MODE="socks5" ;;
     3) MODE="cf-ws" ;;
+    4) MODE="uninstall" ;;
     *) fail "Invalid choice: $choice" ;;
   esac
 }
@@ -344,7 +351,7 @@ prepare_reality_values() {
 }
 
 prepare_socks_values() {
-  PUBLIC_PORT="${PUBLIC_PORT:-$(ask 'SOCKS5 port' '21109')}"
+  PUBLIC_PORT="${PUBLIC_PORT:-$(ask 'SOCKS5 port, Enter for random high port' "$(random_high_port)")}"
   NAME="${NAME:-$(default_name 'SOCKS5')}"
   if [[ "$NON_INTERACTIVE" != "1" ]]; then NAME="$(ask 'Node name' "$NAME")"; fi
   SOCKS_USER="${SOCKS_USER:-$(ask 'SOCKS5 username' "$(random_user)")}"
@@ -357,8 +364,8 @@ prepare_socks_values() {
 }
 
 prepare_cf_ws_values() {
-  PUBLIC_PORT="${PUBLIC_PORT:-$(ask 'Origin VLESS-WS port / Cloudflare Origin Rule rewrite port' '31520')}"
-  WS_PATH="${WS_PATH:-$(ask 'WebSocket path' '/ws233')}"
+  PUBLIC_PORT="${PUBLIC_PORT:-$(ask 'Origin VLESS-WS port, Enter for random high port' "$(random_high_port)")}"
+  WS_PATH="${WS_PATH:-$(ask 'WebSocket path, Enter for random path' "$(random_ws_path)")}"
   if [[ -z "$CF_DOMAIN" ]]; then
     CF_DOMAIN="$(ask_required 'Cloudflare proxied domain/Host, for example hostdzire.212202.xyz')"
   elif [[ "$NON_INTERACTIVE" != "1" ]]; then
@@ -661,10 +668,61 @@ ${link}
 EOF
 }
 
+uninstall_xray_tunnel() {
+  local config="/etc/xray-tunnel-reality/config.json"
+  local ports=()
+  local port
+
+  if [[ -f "$config" ]]; then
+    while IFS= read -r port; do
+      [[ -n "$port" ]] && ports+=("$port")
+    done < <(grep -oE '"port"[[:space:]]*:[[:space:]]*[0-9]+' "$config" | grep -oE '[0-9]+' | sort -u)
+  fi
+
+  info "Stopping xray-tunnel-reality..."
+  systemctl stop xray-tunnel-reality >/dev/null 2>&1 || true
+  systemctl disable xray-tunnel-reality >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/xray-tunnel-reality.service
+  systemctl daemon-reload >/dev/null 2>&1 || true
+  rm -rf /etc/xray-tunnel-reality
+
+  if (( ${#ports[@]} > 0 )); then
+    for port in "${ports[@]}"; do
+      if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qi active; then
+        ufw --force delete allow "$port"/tcp >/dev/null 2>&1 || true
+        ufw --force delete allow "$port"/udp >/dev/null 2>&1 || true
+      fi
+      if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+        firewall-cmd --permanent --remove-port="$port"/tcp >/dev/null 2>&1 || true
+        firewall-cmd --permanent --remove-port="$port"/udp >/dev/null 2>&1 || true
+      fi
+    done
+    if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+      firewall-cmd --reload >/dev/null 2>&1 || true
+    fi
+  fi
+
+  green "xray-tunnel-reality has been uninstalled."
+  cat <<EOF
+
+Removed:
+  Service: /etc/systemd/system/xray-tunnel-reality.service
+  Config:  /etc/xray-tunnel-reality
+
+Kept:
+  Xray binary: /usr/local/bin/xray
+
+EOF
+}
+
 main() {
   need_root
   choose_mode
-  [[ "$MODE" == "reality" || "$MODE" == "socks5" || "$MODE" == "cf-ws" ]] || fail "--mode must be reality, socks5, or cf-ws"
+  [[ "$MODE" == "reality" || "$MODE" == "socks5" || "$MODE" == "cf-ws" || "$MODE" == "uninstall" ]] || fail "--mode must be reality, socks5, cf-ws, or uninstall"
+  if [[ "$MODE" == "uninstall" ]]; then
+    uninstall_xray_tunnel
+    return
+  fi
   install_deps
   install_xray
 
