@@ -810,6 +810,7 @@ for index, node in enumerate(nodes, 1):
         print(f"   中转填写: {public_ip}:{port}")
         print(f"   用户名: {node['user']}")
         print(f"   密码: {node['password']}")
+        print(f"   SOCKS5 明文: {public_ip}:{port}:{node['user']}:{node['password']}")
         print(f"   UDP: {str(bool(node.get('udp', False))).lower()}")
         print(f"   SOCKS 链接: {link}")
     elif typ == "cf-ws":
