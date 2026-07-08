@@ -66,14 +66,6 @@ SNI: www.tesla.com
 节点名: 国家码+协议，例如 DE-VLESS+Reality
 ```
 
-中转面板只填脚本输出的：
-
-```text
-中转填写: 落地IP:外层端口
-```
-
-不要把 `127.0.0.1:4431` 填到中转面板，`4431` 是落地机内部 Reality 端口。
-
 ## 添加 Reality
 
 交互式：
@@ -263,36 +255,31 @@ journalctl -u xray-tunnel-reality -f
 
 ```bash
 xrt
-# 选择 5) 卸载指定协议
+# 选择 3) 卸载指定协议
 ```
 
-卸载整个服务和配置，但保留 Xray 和 xrt：
+卸载整个服务和配置：
 
 ```bash
 xrt --uninstall
 ```
 
-完整卸载脚本管理器：
+完整卸载脚本管理器、所有协议配置和脚本文件：
 
 ```bash
 xrt --full-uninstall
 ```
 
-完整卸载也不会删除：
+完整卸载会删除：
 
 ```text
-/usr/local/bin/xray
+/etc/xray-tunnel-reality
+/etc/systemd/system/xray-tunnel-reality.service
+/usr/local/bin/xrt
+/usr/local/bin/xray-tunnel-reality
+/usr/local/bin/xray-tunnel-reality.bak.codex-*
+/etc/sysctl.d/99-xray-tunnel-reality-bbr.conf
 ```
-
-原因是避免影响其它节点或其它面板。
-
-## 安全说明
-
-- 脚本不安装 Web 面板。
-- 不开放面板端口。
-- 配置目录权限会收紧。
-- Reality 私钥只写入服务端配置，不在查看协议时展示。
-- 不要把 SSH 密码、Reality 私钥、GitHub token 发到公开页面。
 
 ## Xray 版本
 
