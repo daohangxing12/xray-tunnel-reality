@@ -1081,7 +1081,7 @@ remove_node_menu() {
 uninstall_service_config() {
   local confirm="${1:-}"
   if [[ "$NON_INTERACTIVE" != "1" && "$confirm" != "yes" ]]; then
-    read -r -p "确认卸载 ${SERVICE_NAME} 服务和配置？不会删除 /usr/local/bin/xray [y/N]: " confirm || true
+    read -r -p "确认卸载 ${SERVICE_NAME} 服务和所有协议配置？[y/N]: " confirm || true
     [[ "$confirm" =~ ^[yY]$ ]] || return
   fi
   info "Stopping ${SERVICE_NAME}..."
@@ -1090,14 +1090,14 @@ uninstall_service_config() {
   rm -f "/etc/systemd/system/${SERVICE_NAME}.service"
   systemctl daemon-reload >/dev/null 2>&1 || true
   rm -rf "$CONFIG_DIR"
-  green "${SERVICE_NAME} 已卸载。保留：/usr/local/bin/xray 和 xrt 快捷命令。"
+  green "${SERVICE_NAME} 服务和所有协议配置已卸载。"
 }
 
 full_uninstall() {
   uninstall_service_config yes
-  rm -f "$SHORTCUT" "$LOCAL_SCRIPT"
-  green "xrt 快捷命令和本地脚本已删除。"
-  yellow "未删除 /usr/local/bin/xray，避免影响其它面板或节点。"
+  rm -f "$SHORTCUT" "$LOCAL_SCRIPT" "${LOCAL_SCRIPT}.bak.codex-"* /tmp/xray-tunnel-reality-test.log 2>/dev/null || true
+  rm -f "$BBR_CONF" 2>/dev/null || true
+  green "完整卸载完成：协议配置、服务、快捷命令、本地脚本和脚本写入的配置已删除。"
 }
 
 reset_node_vars() {
