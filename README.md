@@ -24,20 +24,29 @@ xrt
 
 以后直接输入 `xrt` 就能管理。
 
+脚本会自动安装 Debian/Ubuntu 常用依赖，包括 `curl`、`wget`、`unzip`、`openssl`、`iproute2`、`python3`、`sudo`、`nano`、`htop`、`screen`。如果检测到 Debian buster 这类旧系统源 404，会自动切换到 `archive.debian.org`。
+
 ## 菜单功能
 
 ```text
-1) 添加 VLESS Reality
-2) 添加 SOCKS5
-3) 添加 Cloudflare VLESS-WS
-4) 查看所有协议链接
-5) 卸载指定协议
-6) 重启服务
-7) 查看状态
-8) 查看日志
-9) BBR 状态/开启
-10) 完整卸载
+1) 安装新协议（多协议共存）
+2) 查看所有协议链接
+3) 卸载指定协议
+4) 重启服务
+5) 查看状态
+6) 查看日志
+7) BBR 状态/开启
+8) 完整卸载
 0) 退出
+```
+
+选择 `1) 安装新协议（多协议共存）` 后，再选择：
+
+```text
+1) VLESS Reality
+2) SOCKS5
+3) Cloudflare VLESS-WS
+0) 返回
 ```
 
 ## Reality 结构
@@ -53,7 +62,7 @@ Reality 默认结构：
 ```text
 外层端口: 随机高位端口，范围 20000-59999
 内层端口: 4431
-SNI: www.icloud.com
+SNI: www.tesla.com
 节点名: 国家码+协议，例如 DE-VLESS+Reality
 ```
 
@@ -94,7 +103,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/daohangxing12/xray-tunnel-re
   --mode reality \
   --port 56777 \
   --inner-port 4431 \
-  --sni www.icloud.com
+  --sni www.tesla.com
 ```
 
 ## 添加 SOCKS5
@@ -196,6 +205,16 @@ bash <(curl -fsSL https://raw.githubusercontent.com/daohangxing12/xray-tunnel-re
 ```
 
 Cloudflare 里要设置 Origin Rule，把访问 `--cf-domain` 的流量转到脚本输出的源站端口。
+
+源站 Xray 的 VLESS-WS inbound 会贴近 3x-ui 备份结构：
+
+```text
+network: ws
+security: none
+externalProxy: []
+sniffing: disabled
+wsSettings.path: 你的 WS 路径
+```
 
 ## BBR
 
