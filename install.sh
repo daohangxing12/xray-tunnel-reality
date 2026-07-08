@@ -21,7 +21,7 @@ ACTION=""
 PUBLIC_PORT=""
 INNER_PORT=""
 UUID_VALUE=""
-SNI_VALUE="www.icloud.com"
+SNI_VALUE="www.tesla.com"
 SHORT_ID=""
 NAME=""
 PRIVATE_KEY=""
@@ -62,7 +62,7 @@ Install modes:
   --mode reality|socks5|cf-ws
   --port PORT              Public/origin listen port. Default: random high port.
   --inner-port PORT        Local Reality port. Default: 4431, only for reality.
-  --sni DOMAIN             Reality SNI/target domain. Default: www.icloud.com
+  --sni DOMAIN             Reality SNI/target domain. Default: www.tesla.com
   --uuid UUID              VLESS UUID. If omitted, generate randomly.
   --short-id HEX           Reality shortId. If omitted, generate random 8 hex chars.
   --private-key KEY        Reality server private key. Omit to generate randomly.
@@ -205,6 +205,42 @@ pause() {
 
 need_root() { [[ "$(id -u)" == "0" ]] || fail "Please run as root."; }
 
+repair_debian_archive_sources() {
+  local os_id="" codename="" timestamp=""
+  if [[ -r /etc/os-release ]]; then
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    os_id="${ID:-}"
+    codename="${VERSION_CODENAME:-}"
+  fi
+
+  [[ "$os_id" == "debian" ]] || return 1
+  case "$codename" in
+    buster|stretch|jessie) ;;
+    *) return 1 ;;
+  esac
+
+  timestamp="$(date +%Y%m%d-%H%M%S)"
+  yellow "检测到 Debian ${codename} 旧系统源，自动切换到 archive.debian.org。"
+  cp -a /etc/apt/sources.list "/etc/apt/sources.list.bak.${timestamp}" 2>/dev/null || true
+  find /etc/apt/sources.list.d -type f -name "*.list" -exec sh -c 'mv "$1" "$1.disabled"' _ {} \; 2>/dev/null || true
+  cat > /etc/apt/sources.list <<EOF
+deb http://archive.debian.org/debian ${codename} main contrib non-free
+deb http://archive.debian.org/debian ${codename}-updates main contrib non-free
+deb http://archive.debian.org/debian-security ${codename}/updates main contrib non-free
+EOF
+  printf 'Acquire::Check-Valid-Until "false";\n' > /etc/apt/apt.conf.d/99archive
+}
+
+apt_update_for_install() {
+  apt-get clean || true
+  if apt-get update --allow-releaseinfo-change -y; then
+    return
+  fi
+  repair_debian_archive_sources || fail "apt-get update failed. Please check /etc/apt/sources.list."
+  apt-get -o Acquire::Check-Valid-Until=false update -y || fail "apt-get update failed after switching archive sources."
+}
+
 install_deps() {
   local missing=()
   for c in curl unzip openssl sed awk grep systemctl ss python3 sysctl; do command -v "$c" >/dev/null 2>&1 || missing+=("$c"); done
@@ -212,14 +248,14 @@ install_deps() {
   info "Installing dependencies: ${missing[*]}"
   if command -v apt-get >/dev/null 2>&1; then
     export DEBIAN_FRONTEND=noninteractive
-    apt-get update
-    apt-get install -y curl unzip openssl iproute2 ca-certificates procps python3
+    apt_update_for_install
+    apt-get install -y curl wget unzip openssl iproute2 ca-certificates procps python3 sudo nano htop screen
   elif command -v dnf >/dev/null 2>&1; then
-    dnf install -y curl unzip openssl iproute ca-certificates procps-ng python3
+    dnf install -y curl wget unzip openssl iproute ca-certificates procps-ng python3 sudo nano htop screen
   elif command -v yum >/dev/null 2>&1; then
-    yum install -y curl unzip openssl iproute ca-certificates procps-ng python3
+    yum install -y curl wget unzip openssl iproute ca-certificates procps-ng python3 sudo nano htop screen
   elif command -v apk >/dev/null 2>&1; then
-    apk add --no-cache curl unzip openssl iproute2 ca-certificates procps python3
+    apk add --no-cache curl wget unzip openssl iproute2 ca-certificates procps python3 sudo nano htop screen
   else
     fail "Unsupported package manager. Install curl unzip openssl iproute2 procps python3 manually."
   fi
@@ -638,14 +674,15 @@ for node in nodes:
             "listen": "0.0.0.0",
             "port": port,
             "protocol": "vless",
-            "settings": {"clients": [{"id": node["uuid"], "email": f"default@{tag}"}], "decryption": "none"},
+            "settings": {"clients": [{"id": node["uuid"], "email": f"default@{tag}"}], "decryption": "none", "encryption": "none"},
             "streamSettings": {
                 "network": "ws",
                 "security": "none",
+                "externalProxy": [],
                 "wsSettings": {"acceptProxyProtocol": False, "path": node["path"], "host": "", "headers": {}, "heartbeatPeriod": 0}
             },
             "tag": tag,
-            "sniffing": {"enabled": True, "destOverride": ["http", "tls"], "metadataOnly": False, "routeOnly": False}
+            "sniffing": {"enabled": False, "destOverride": ["http", "tls", "quic", "fakedns"], "metadataOnly": False, "routeOnly": False}
         })
     else:
         raise SystemExit(f"unknown node type: {typ}")
@@ -893,7 +930,7 @@ EOF
 prepare_reality_values() {
   PUBLIC_PORT="${PUBLIC_PORT:-$(ask '外层公网端口，回车随机高位端口' "$(random_high_port)")}"
   INNER_PORT="${INNER_PORT:-$(ask '内层 Reality 端口' '4431')}"
-  SNI_VALUE="${SNI_VALUE:-www.icloud.com}"
+  SNI_VALUE="${SNI_VALUE:-www.tesla.com}"
   if [[ "$NON_INTERACTIVE" != "1" ]]; then SNI_VALUE="$(ask 'SNI/Reality target' "$SNI_VALUE")"; fi
   NAME="${NAME:-$(default_name 'VLESS+Reality')}"
   if [[ "$NON_INTERACTIVE" != "1" ]]; then NAME="$(ask '节点名称' "$NAME")"; fi
@@ -1079,6 +1116,27 @@ reset_node_vars() {
   WS_PATH=""
 }
 
+install_protocol_menu() {
+  while true; do
+    echo
+    echo "========== 安装新协议（多协议共存） =========="
+    echo "1) VLESS Reality"
+    echo "2) SOCKS5"
+    echo "3) Cloudflare VLESS-WS"
+    echo "0) 返回"
+    echo "=================================================="
+    local choice
+    read -r -p "请选择: " choice || return
+    case "$choice" in
+      1) reset_node_vars; MODE="reality"; install_node; MODE=""; return ;;
+      2) reset_node_vars; MODE="socks5"; install_node; MODE=""; return ;;
+      3) reset_node_vars; MODE="cf-ws"; install_node; MODE=""; return ;;
+      0) return ;;
+      *) yellow "无效选择。" ;;
+    esac
+  done
+}
+
 manager_menu() {
   install_deps
   install_shortcut
@@ -1094,31 +1152,27 @@ manager_menu() {
     fi
     echo "快捷命令: xrt"
     echo
-    echo "1) 添加 VLESS Reality"
-    echo "2) 添加 SOCKS5"
-    echo "3) 添加 Cloudflare VLESS-WS"
-    echo "4) 查看所有协议链接"
-    echo "5) 卸载指定协议"
-    echo "6) 重启服务"
-    echo "7) 查看状态"
-    echo "8) 查看日志"
-    echo "9) BBR 状态/开启"
-    echo "10) 完整卸载"
+    echo "1) 安装新协议（多协议共存）"
+    echo "2) 查看所有协议链接"
+    echo "3) 卸载指定协议"
+    echo "4) 重启服务"
+    echo "5) 查看状态"
+    echo "6) 查看日志"
+    echo "7) BBR 状态/开启"
+    echo "8) 完整卸载"
     echo "0) 退出"
     echo "=================================================="
     local choice
     read -r -p "请选择: " choice || exit 0
     case "$choice" in
-      1) reset_node_vars; MODE="reality"; install_node; pause ;;
-      2) reset_node_vars; MODE="socks5"; install_node; pause ;;
-      3) reset_node_vars; MODE="cf-ws"; install_node; pause ;;
-      4) show_nodes; pause ;;
-      5) remove_node_menu; pause ;;
-      6) service_restart; green "服务已重启。"; pause ;;
-      7) show_status; pause ;;
-      8) show_logs; pause ;;
-      9) enable_bbr; pause ;;
-      10) full_uninstall; pause ;;
+      1) install_protocol_menu; pause ;;
+      2) show_nodes; pause ;;
+      3) remove_node_menu; pause ;;
+      4) service_restart; green "服务已重启。"; pause ;;
+      5) show_status; pause ;;
+      6) show_logs; pause ;;
+      7) enable_bbr; pause ;;
+      8) full_uninstall; pause ;;
       0) exit 0 ;;
       *) yellow "无效选择。"; pause ;;
     esac
